@@ -1,0 +1,132 @@
+/* Shared final layer for the bundled console only. Every paint value comes
+   from the theme; user spacing, radii, typography and motion remain in charge. */
+body[data-panel] { --content-border-width:max(1px,var(--border-width,1px)); }
+body[data-panel] > main { padding-top: max(10px,calc(var(--page-padding,16px) * .65)); }
+body[data-panel] main > .head { min-height:44px; margin-bottom:14px; padding-bottom:10px; border-color:var(--line-soft); gap:10px 20px; }
+body[data-panel] main > .head h2 { font-size:calc(20px * var(--heading-scale,1)); font-weight:var(--heading-weight); }
+body[data-panel] main > .head :is(.muted,.error) { font-weight:400; }
+body[data-panel] main > .toolbar { padding:12px; margin-bottom:16px; border:var(--border-width) solid var(--line-soft); border-radius:var(--radius-card); background:var(--surface); gap:10px; }
+body[data-panel] .card::after { content:none; }
+body[data-panel] .list-item { box-shadow:none; }
+/* Reading regions need a boundary even when decorative control borders are off. */
+body[data-panel] :is(.list-item,.card,.metric,.default-capabilities,.capability-provider-picker) { border:var(--content-border-width) solid var(--line); }
+body[data-panel] .list-item:is(:hover,.selected,.is-active) { border-color:var(--accent-line); }
+body[data-panel] .list-item.selected { box-shadow:inset 3px 0 var(--selected-color); }
+body[data-panel] .row { gap:12px 18px; }
+body[data-panel] .empty { min-height:220px; line-height:1.8; }
+body[data-panel] .empty::before { width:36px; height:36px; opacity:.3; }
+body[data-panel] :is(.toolbar,.head) :is(input,select) { background:var(--surface-2); }
+body[data-panel] .toolbar > label:has(> input[type="checkbox"]) { min-height:var(--control-height);padding:6px 10px;border:var(--border-width) solid var(--line);border-radius:var(--radius-button);background:var(--surface-2);cursor:pointer; }
+body[data-panel] .toolbar > label:has(> input:checked) { color:var(--text);border-color:var(--accent-line);background:var(--selected-surface); }
+body[data-panel] .pre { tab-size:2; }
+body[data-panel] :is(#list,#detail,.messages,.usage-table,.settings-content) { overscroll-behavior:contain; }
+body[data-panel] :is(.grid,.split) > :is(article,div) { min-width:0; }
+body[data-panel] .tabs { gap:6px; padding-bottom:10px; margin-bottom:18px; border-color:var(--line-soft); }
+body[data-panel] .tabs button { min-width:72px; }
+
+/* Detail navigation has a visible, keyboard-operable entrance of its own. */
+body[data-panel] #list .list-entry-open { display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;max-width:100%;min-height:36px;padding:4px 0;border:0;background:transparent;color:var(--text);text-align:left;white-space:normal;box-shadow:none;transform:none; }
+body[data-panel] #list .list-entry-open > strong { min-width:0;overflow-wrap:anywhere; }
+body[data-panel] #list .list-entry-open:is(:hover,[aria-current="true"]) { color:var(--accent); }
+.list-entry-arrow { flex:0 0 auto;color:var(--muted);font-size:20px;font-weight:400; }
+body[data-panel] #list .list-entry-open[aria-current="true"] .list-entry-arrow { color:var(--accent); }
+body[data-panel] #list .list-entry-open:focus-visible { outline-offset:2px; }
+
+/* Extension forms use the same broad click target and state signal as settings. */
+dialog .setting-field.extension-setting-toggle { position:relative;display:grid;grid-template-columns:minmax(0,1fr) 20px;gap:6px 14px;align-items:center;min-height:46px;padding:12px 14px;border:var(--border-width) solid var(--line-strong);border-radius:var(--radius-button);background:var(--surface-2);cursor:pointer; }
+dialog .extension-setting-toggle > span { color:var(--text); }
+dialog .extension-setting-toggle > small { grid-column:1/-1;font-weight:400;color:var(--muted); }
+dialog .extension-setting-toggle > input[type="checkbox"] { position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer; }
+dialog .extension-setting-toggle::after { content:'';width:20px;height:20px;grid-column:2;grid-row:1;border:1px solid var(--muted);border-radius:50%;pointer-events:none; }
+dialog .extension-setting-toggle:has(:checked) { border-color:var(--accent);background:var(--selected-surface);box-shadow:inset 3px 0 var(--accent); }
+dialog .extension-setting-toggle:has(:checked)::after { content:'✓';display:grid;place-items:center;border-color:var(--accent);color:var(--accent);font-size:12px; }
+dialog .extension-setting-toggle:has(:focus-visible) { outline:var(--focus-width) solid var(--focus);outline-offset:-2px; }
+
+/* Status marks carry meaning without painting a warning box around each row. */
+body[data-panel="sessions"] #list .list-item { border-color:var(--line-soft); box-shadow:inset 2px 0 color-mix(in srgb,var(--session-status-color,var(--line)) 65%,transparent); padding:var(--card-padding,14px); }
+body[data-panel="sessions"] #list .list-item.selected { border-color:var(--accent-line); box-shadow:inset 3px 0 var(--selected-color); }
+body[data-panel="sessions"] #list .session-state-label { font-size:11px; }
+body[data-panel="sessions"] #list .muted { display:flex; flex-wrap:wrap; gap:3px 6px; font-size:11px; }
+body[data-panel="sessions"] #detail:has(> .empty),body[data-panel="memory"] #detail:has(> .empty) { min-height:320px; display:grid; align-items:center; }
+body[data-panel="sessions"] .flow-card { margin-bottom:12px; border-radius:var(--radius-card); border-color:var(--line); }
+body[data-panel="sessions"] .flow-card > summary { padding:12px 14px; gap:10px; }
+body[data-panel="sessions"] .flow-card.flow-pending { border-left-color:var(--accent); }
+body[data-panel="sessions"] .flow-card .pre { line-height:1.85; padding:10px 12px; }
+body[data-panel="sessions"] .flow-pending .pre { overflow-anchor:none; }
+body[data-panel="sessions"] .session-meta { gap:8px 16px; font-size:12px; }
+body[data-panel="sessions"] .flow-error { border-left-color:var(--bad); }
+body[data-panel="sessions"] .flow-error .flow-content { color:var(--bad); }
+body[data-panel=sessions] :is(.flow-card,.session-prompt) .pre,
+body[data-panel=sessions] .raw-json { border:var(--content-border-width) solid var(--line-strong);border-radius:var(--radius-input);background:var(--surface);padding:10px 12px; }
+
+body[data-panel="chats"] .message { padding-block:8px; border-bottom-color:var(--line); }
+body[data-panel="chats"] .message .body { line-height:1.85; }
+body[data-panel="chats"] .message-media img { border-radius:var(--radius-card); }
+body[data-panel="memory"] .member-cards { gap:var(--list-gap,18px); }
+body[data-panel="memory"] .member-cards .card { padding:var(--card-padding,18px); }
+body[data-panel="memory"] .member-impression-body li { padding-block:4px; line-height:1.85; }
+
+/* Quiet catalogue cards: names and availability take precedence over numbering. */
+body:is([data-panel="skills"],[data-panel="plugins"]) #list .list-item { padding:var(--card-padding,18px); border-top:var(--border-width) solid var(--line-soft); }
+body:is([data-panel="skills"],[data-panel="plugins"]) #list .list-item::before { content:none; }
+body:is([data-panel="skills"],[data-panel="plugins"]) #list .row strong { font-size:calc(16px * var(--heading-scale,1)); }
+body:is([data-panel="skills"],[data-panel="plugins"]) .extension-description { border-color:var(--line-soft); padding-top:12px; margin-top:12px; }
+body:is([data-panel="skills"],[data-panel="plugins"]) .extension-id { margin-top:6px; }
+body[data-panel="usage"] .metric { border-radius:var(--radius-card); padding:var(--card-padding,18px); }
+body[data-panel="usage"] .usage-table :is(th,td) { border-bottom-color:var(--line-soft); }
+body[data-panel="usage"] .usage-table thead th { position:sticky; top:0; z-index:1; }
+body[data-panel="usage"] .usage-block { margin-bottom:28px; }
+body[data-panel="logs"] #app-log { line-height:1.85; padding:16px; border:var(--content-border-width) solid var(--line);border-radius:var(--radius-input); }
+body[data-panel="logs"] main > .card { padding:0; overflow:hidden; }
+body[data-panel="community"] main > .card { max-width:1120px; margin:0 auto 20px; }
+body[data-panel="community"] .grid-2 { gap:20px 24px; }
+body[data-panel="settings"] .settings-section { border:var(--content-border-width) solid var(--line); }
+body[data-panel="settings"] .settings-section > h3 { margin-bottom:20px; }
+body[data-panel="settings"] .settings-sidebar a { border-radius:var(--radius-button); }
+body[data-panel="settings"] .settings-toggle-card { line-height:1.7; }
+
+/* Native modal containment: useful on short windows and long forms. */
+dialog[data-managed-dialog] { max-height:calc(100dvh - 40px); overscroll-behavior:contain; scrollbar-gutter:stable; scroll-padding-block:24px; overflow-x:hidden; overflow-y:auto; border-top-width:var(--border-width); }
+dialog[data-managed-dialog] > :is(h2,h3,.dialog-head) { position:sticky; top:calc(-1 * var(--dialog-padding)); z-index:3; background:var(--surface); padding-block:14px; margin-top:-14px; margin-bottom:18px; border-bottom:1px solid var(--line-soft); }
+dialog[data-managed-dialog] .dialog-head h3 { margin:0; }
+dialog[data-managed-dialog] .dialog-standard-head { position:sticky;top:calc(-1 * var(--dialog-padding));z-index:5;display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;gap:16px;min-width:0;margin-top:-12px;margin-bottom:16px;padding-block:12px;background:var(--surface);border-bottom:1px solid var(--line-soft); }
+dialog[data-managed-dialog] .dialog-standard-head > :is(h1,h2,h3,h4) { position:static;flex:1 1 auto;min-width:0;margin:0;padding:0;border:0;font-size:calc(16px * var(--heading-scale,1)); }
+dialog[data-managed-dialog] :is(.dialog-head,.settings-dialog-head) > :is(h2,h3) { min-width:0;flex:1 1 auto; }
+dialog[data-managed-dialog] .dialog-close-button { display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:36px;min-height:36px;padding:8px;border-color:var(--line);color:var(--muted);background:var(--surface); }
+dialog[data-managed-dialog] .dialog-close-button:hover { color:var(--text);border-color:var(--line-strong); }
+dialog[data-managed-dialog] .dialog-close-button svg { width:18px;height:18px; }
+dialog[data-managed-dialog] :is(.model-selector-nav,.model-selector-list,.search-source-nav) > button { width:100%;text-align:left;justify-content:flex-start;white-space:normal; }
+dialog[data-managed-dialog] :is(.persona-library-nav,.search-source-grid,#provider-manager-nav) > button { width:100%;white-space:normal; }
+dialog[data-managed-dialog] :is(.persona-library-editor,.search-source-editor) > .setting-field { margin-block:0; }
+dialog[data-managed-dialog] > .actions:last-child,dialog[data-managed-dialog] > form > .actions:last-child { position:sticky; bottom:calc(-1 * var(--dialog-padding)); z-index:2; padding-block:14px; background:var(--surface); border-top:1px solid var(--line-soft); justify-content:flex-end; gap:10px; }
+dialog[data-managed-dialog] :is(input,textarea,select,button) { scroll-margin-block:64px; }
+dialog[data-managed-dialog] .setting-field { margin-block:16px; }
+dialog[data-managed-dialog] > textarea { width:100%;margin-block:0 16px; }
+dialog[data-managed-dialog] > :is(.muted,.error,[role="status"]):empty { display:none; }
+dialog[data-managed-dialog] :is(.error,.notice):empty { display:none; }
+dialog[data-managed-dialog] :is(.list,.settings-fields) { min-width:0; }
+dialog[data-managed-dialog] > .dialog-dismiss { position:sticky; float:right; top:calc(12px - var(--dialog-padding)); z-index:5; width:32px; min-height:32px; padding:6px; margin:0 0 -32px 8px; border-color:transparent; background:var(--surface); color:var(--muted); }
+dialog[data-managed-dialog] > :is(h2,h3),dialog[data-managed-dialog] > article > :is(h2,h3):first-child { padding-right:42px; }
+dialog[data-managed-dialog] > article > :is(h2,h3):first-child { position:sticky; top:calc(-1 * var(--dialog-padding)); z-index:3; padding-block:14px; margin-top:-14px; background:var(--surface); border-bottom:1px solid var(--line-soft); }
+dialog.settings-model-prices fieldset { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:16px; margin-block:18px; border:1px solid var(--line); border-radius:var(--radius-card); }
+dialog.settings-model-prices fieldset > :is(p,button) { grid-column:1/-1; margin:0; }
+dialog.settings-model-prices :is(fieldset > label,article > label) { display:grid; gap:8px; min-width:0; color:var(--muted); font-size:12px; }
+dialog.settings-model-prices label > input { width:100%; }
+dialog.settings-model-prices fieldset legend { padding-inline:6px; font-size:12px; overflow-wrap:anywhere; }
+dialog.settings-model-prices > article > .actions:last-child { position:sticky; bottom:calc(-1 * var(--dialog-padding)); padding-block:12px; z-index:2; background:var(--surface); border-top:1px solid var(--line-soft); }
+
+/* The shell keeps its small connection indicator in plain language. */
+.app-shell .brand-copy small { font-family:var(--font-sans); font-size:10px; letter-spacing:.04em; color:var(--muted); }
+.app-shell #nav button { border-radius:var(--radius-button); }
+.app-shell .rail-footer { border-color:var(--line-soft); }
+
+@media(max-width:650px) {
+  body[data-panel] main > .head { align-items:flex-start; gap:10px; }
+  body[data-panel] main > .toolbar { padding:10px; }
+  body[data-panel] .toolbar > :is(input[type="search"],select) { flex:1 1 140px; min-width:0; max-width:100%; }
+  body[data-panel="sessions"] .flow-card > summary { flex-wrap:wrap; }
+  body[data-panel="sessions"] .flow-duration { min-width:0; margin-left:auto; }
+  body[data-panel="sessions"] .session-meta { font-size:11px; }
+  dialog[data-managed-dialog] { width:calc(100vw - 24px); max-width:calc(100vw - 24px); max-height:calc(100dvh - 24px); padding:min(var(--dialog-padding),20px); }
+  dialog.settings-model-prices fieldset { grid-template-columns:minmax(0,1fr); }
+}

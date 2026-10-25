@@ -1,10 +1,10 @@
 // Default task scheduler: idle and hidden panels do not own a ticking interval.
 // A late poll cannot start a new interval after disposal.
-export function createActiveTaskTicker({active,tick,poll,interval=1000,pollEvery=2}) {
+export function createActiveTaskTicker({active,tick,poll=null,interval=1000,pollEvery=2}) {
   let timer=null,disposed=false,pollBusy=false,ticks=0,scheduledInterval=null;
   function stop(){if(timer!==null)clearInterval(timer);timer=null;ticks=0;scheduledInterval=null;}
   function refresh(){
-    if(disposed||pollBusy||document.hidden||!active())return;
+    if(!poll||disposed||pollBusy||document.hidden||!active())return;
     pollBusy=true;
     Promise.resolve().then(()=>{if(!disposed&&active())return poll();}).catch(()=>{}).finally(()=>{pollBusy=false;sync();});
   }

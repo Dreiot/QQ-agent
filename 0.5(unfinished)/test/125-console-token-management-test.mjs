@@ -1,4 +1,4 @@
-import {settingsSection} from './settings-navigation.mjs';
+import {settingsSection,openSettingsFold} from './settings-navigation.mjs';
 // Temporary real kernel + headless Chrome and real Electron IPC handler via a mock shell.
 // No current headed QA, OS autostart, external service, or user credential is touched.
 import assert from 'node:assert/strict';
@@ -26,6 +26,8 @@ let browser,base,page,panel;
 const errors=[],requests=[],writes=[];
 async function response(token,route='/api/config',method='GET',body){return fetch(base+route,{method,headers:{'x-console-token':token,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});}
 const disk=()=>JSON.parse(fs.readFileSync(path.join(dataDir,'config.json'),'utf8'));
+const openTokenSettings=async()=>{await panel.locator('#settings-sidebar a[data-target=desktop]').waitFor({state:'visible'});await settingsSection(panel,'desktop');await openSettingsFold(panel,'layout-console-connection');};
+const waitTokenValue=expected=>page.waitForFunction(expected=>document.querySelector('#console-token-current')?.value===expected,expected);
 try{
   kernel.config.update({server:{port:0,token:oldToken},telemetry:{enabled:false},proactive:{enabled:false},persona:{botName:'125 unchanged'}});
   base=`http://127.0.0.1:${await kernel.start()}`;
@@ -60,7 +62,7 @@ try{
     else{window.qa125Messages=[];window.addEventListener('message',event=>window.qa125Messages.push(JSON.stringify(event.data)));}
   },{origin:base,key:CONSOLE_SESSION_KEY,token:oldToken});
   await page.goto(base);await page.locator('#nav button[data-panel=settings]').click();panel=page.frameLocator('#panel-host iframe');
-  await panel.locator('#status').filter({hasText:'配置已读取'}).waitFor();await settingsSection(panel,'data');
+  await openTokenSettings();
   console.log('· The settings iframe opens a host-only manager; display/copy/cancel never return a credential');
   await panel.getByRole('button',{name:'管理控制台访问令牌',exact:true}).click();
   const dialog=page.locator('#console-token-dialog'),current=dialog.locator('#console-token-current'),next=dialog.locator('#console-token-new');
@@ -68,9 +70,14 @@ try{
   await dialog.getByRole('button',{name:'显示',exact:true}).click();assert.equal(await current.getAttribute('type'),'text');
   await dialog.getByRole('button',{name:'复制',exact:true}).click();assert.deepEqual(await page.evaluate(()=>window.qa125Copied),[oldToken]);
   assert.throws(()=>consoleTokenValue('bad\nheader'),/HTTP请求头/);
-  for(const bad of ['', '   ', '令牌', 'x'.repeat(8193)]){
-    const count=writes.length;await next.fill(bad);await dialog.getByRole('button',{name:'保存新令牌'}).click();await dialog.locator('#console-token-status').filter({hasText:/非空|HTTP请求头/}).waitFor();assert.equal(writes.length,count);assert.equal(disk().server.token,oldToken);
+  // The current UI automatically saves nonblank edits. Blank means unchanged;
+  // invalid nonblank input reports through the visible saved/error toast.
+  for(const bad of ['', '   ', '令牌', 'x'.repeat(8193)])assert.throws(()=>consoleTokenValue(bad));
+  for(const blank of ['', '   ']){const count=writes.length;await next.fill(blank);await page.waitForTimeout(750);assert.equal(writes.length,count);assert.equal(disk().server.token,oldToken);}
+  for(const bad of ['令牌', 'x'.repeat(8193)]){
+    const count=writes.length;await next.fill(bad);await page.locator('.settings-save-toast[data-state=error]').filter({hasText:/非空|HTTP请求头/}).waitFor();assert.equal(writes.length,count);assert.equal(disk().server.token,oldToken);
   }
+  await next.fill('');await page.locator('.settings-save-toast[data-state=saved]').waitFor();
   const cancelled=await dialog.evaluate(node=>{
     const current=node.querySelector('#console-token-current'),next=node.querySelector('#console-token-new');
     node.querySelector('.dialog-actions button').click();
@@ -90,28 +97,28 @@ try{
   const rename=fs.renameSync;
   fs.renameSync=function(...args){if(String(args[1])===path.join(dataDir,'config.json'))throw new Error('125 synthetic GUI rename failure');return rename.apply(this,args);};
   try{
-    await next.fill('gui-not-committed-125');await dialog.getByRole('button',{name:'保存新令牌'}).click();await dialog.locator('#console-token-status').filter({hasText:'保留当前凭据'}).waitFor();
+    await next.fill('gui-not-committed-125');await page.locator('.settings-save-toast[data-state=error]').filter({hasText:'保留当前凭据'}).waitFor();
     assert.equal(disk().server.token,oldToken);assert.equal(await current.inputValue(),oldToken);
     assert.equal(await page.evaluate(key=>JSON.parse(sessionStorage.getItem(key)).token,CONSOLE_SESSION_KEY),oldToken);
     assert.equal((await response(oldToken,'/api/panels')).status,200);assert.equal(ended,false);
   }finally{fs.renameSync=rename;}
   console.log('· Successful token change revokes REST and existing SSE, then reconnects and reloads with the new tab credential');
-  await next.fill(newToken);await dialog.getByRole('button',{name:'保存新令牌'}).click();await dialog.locator('#console-token-status').filter({hasText:'连接已更新'}).waitFor();
+  await next.fill(newToken);await waitTokenValue(newToken);await page.locator('.settings-save-toast[data-state=saved]').waitFor();
   assert.equal(disk().server.token,newToken);assert.equal((await response(oldToken)).status,401);assert.equal((await response(newToken)).status,200);
   await after;assert.equal(ended,true);streamAbort.abort();
   assert.equal((await response(oldToken,'/api/events')).status,401);
-  await page.locator('#sse').filter({hasText:'SSE 已连接'}).waitFor();
+  await page.locator('#sse').filter({hasText:'实时同步'}).waitFor();
   assert.equal(await page.evaluate(key=>JSON.parse(sessionStorage.getItem(key)).token,CONSOLE_SESSION_KEY),newToken);
-  await dialog.getByRole('button',{name:'关闭',exact:true}).click();await page.reload();await page.locator('#nav button[data-panel=settings]').waitFor();await page.locator('#sse').filter({hasText:'SSE 已连接'}).waitFor();
+  await dialog.getByRole('button',{name:'关闭',exact:true}).click();await page.reload();await page.locator('#nav button[data-panel=settings]').waitFor();await page.locator('#sse').filter({hasText:'实时同步'}).waitFor();
   assert.equal(new URL(page.url()).search,'');assert.doesNotMatch(await page.evaluate(()=>JSON.stringify(localStorage)),/private-125/);
 
   console.log('· A committed POST whose response is lost is recovered by candidate authentication');
-  await page.locator('#nav button[data-panel=settings]').click();panel=page.frameLocator('#panel-host iframe');await panel.locator('#status').filter({hasText:'配置已读取'}).waitFor();await settingsSection(panel,'data');
+  await page.locator('#nav button[data-panel=settings]').click();panel=page.frameLocator('#panel-host iframe');await openTokenSettings();
   await panel.getByRole('button',{name:'管理控制台访问令牌',exact:true}).click();
   let lost=false;await page.route('**/api/config',async route=>{if(route.request().method()==='POST'&&!lost){lost=true;await route.fetch();await route.abort('failed');}else await route.continue();});
-  await next.fill(recoveredToken);await dialog.getByRole('button',{name:'保存新令牌'}).click();await dialog.locator('#console-token-status').filter({hasText:'连接已更新'}).waitFor();await page.unroute('**/api/config');
+  await next.fill(recoveredToken);await waitTokenValue(recoveredToken);await page.locator('.settings-save-toast[data-state=saved]').waitFor();await page.unroute('**/api/config');
   assert.equal(disk().server.token,recoveredToken);assert.equal(await page.evaluate(key=>JSON.parse(sessionStorage.getItem(key)).token,CONSOLE_SESSION_KEY),recoveredToken);
-  await page.locator('#sse').filter({hasText:'SSE 已连接'}).waitFor();
+  await page.locator('#sse').filter({hasText:'实时同步'}).waitFor();
   const frameMessages=await panel.locator('body').evaluate(()=>window.qa125Messages);
   assert.doesNotMatch(JSON.stringify(frameMessages),/old-private-125|new-private-125|recovered-private-125/);
   assert.ok(requests.filter(request=>new URL(request.url).pathname==='/api/events').some(request=>request.token===recoveredToken));

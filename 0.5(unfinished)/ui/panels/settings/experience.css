@@ -1,0 +1,248 @@
+/* A single card vocabulary for all native and custom switches. */
+body[data-panel=settings] .settings-layout{grid-template-columns:170px minmax(0,1fr);gap:18px;}
+body[data-panel=settings] .settings-aside,body[data-panel=settings] .settings-content{max-height:calc(100vh - 88px);}
+body[data-panel=settings] .settings-aside{border:0;background:transparent;}
+body[data-panel=settings] .settings-sidebar a{grid-template-columns:3px minmax(0,1fr);padding:11px 8px;}
+body[data-panel=settings] .channel-no,body[data-panel=settings] .module-no,body[data-panel=settings] .head .eyebrow{display:none;}
+body[data-panel=settings] .field-hint,body[data-panel=settings] .secret-state{font-size:12px;}
+body[data-panel=settings] .settings-dialog-note:empty{display:none;}
+body[data-panel=settings] .activity-footer:has(>button[hidden]){display:none;}
+body[data-panel=settings] .activity-head-controls .activity-switch.settings-toggle-card{min-height:42px;min-width:110px;padding:10px;}
+body[data-panel=settings] .activity-switch .field-title{display:inline;}
+body[data-panel=settings] .settings-toggle-card>.field-title{margin:0;}
+body[data-panel=settings] #tool-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+body[data-panel=settings] #tool-list .tool-toggle{margin:0;display:grid;grid-template-columns:minmax(0,1fr) 20px;}
+body[data-panel=settings] #tool-list .tool-toggle>span{grid-column:1;}
+body[data-panel=settings] #tool-list .tool-toggle::after{grid-column:2;grid-row:1/3;}
+body[data-panel=settings] #tool-list .tool-toggle>small:empty{display:none;}
+body[data-panel=settings] #tool-list .tool-toggle[data-available=false]:has(input:checked){border-color:var(--warn)!important;box-shadow:inset 3px 0 var(--warn)!important;background:color-mix(in srgb,var(--warn) 9%,var(--surface))!important;}
+body[data-panel=settings] .send-setting-help{font-weight:400;}
+body[data-panel=settings] .settings-section{padding:18px;}
+body[data-panel=settings] #section-appearance>.settings-fields{grid-template-columns:minmax(0,1fr);}
+body[data-panel=settings] #section-appearance>.settings-fields>.setting-field{max-width:340px;}
+body[data-panel=settings] .settings-compact-group>.component-preview{margin:16px 0 0;}
+body[data-panel=settings] .is-inactive{opacity:.55;}
+body[data-panel=settings] .settings-scope-choice{padding:18px 24px;min-width:150px;border-radius:8px;font-size:15px;}
+body[data-panel=settings] .palette-choice{position:relative;display:grid;grid-template-columns:repeat(4,1fr);width:86px;height:54px;min-height:54px;padding:5px;border:1px solid var(--line);border-radius:8px;overflow:hidden;gap:0;}
+body[data-panel=settings] .palette-choice>span{height:100%;}
+body[data-panel=settings] .palette-choice[aria-pressed=true]{border:2px solid var(--accent);padding:4px;}
+body[data-panel=settings] .settings-inline-summary[data-connected=true]{border-color:var(--good);}
+/* Account cards already show normal connection states. Keep this banner for
+   verification/errors and for older hosts without the account-card feature. */
+#section-onebot:has(.account-connection-card) .settings-inline-summary:is([data-phase=loading],[data-phase=ready],[data-phase=idle]){display:none;}
+body[data-panel=settings] .settings-inline-summary[data-connected=false]{border-color:var(--warn);}
+body[data-panel=settings] .settings-inline-summary[data-phase=error]{border-color:var(--bad);}
+body[data-panel=settings] .settings-toggle-card {
+  position:relative;display:flex;align-items:center;justify-content:space-between;gap:12px;
+  min-height:46px;min-width:0;padding:12px 14px;box-sizing:border-box;text-align:left;
+  border:1px solid var(--line)!important;border-radius:8px;background:var(--surface)!important;
+  color:var(--muted);cursor:pointer;box-shadow:none!important;line-height:1.5;
+  transition:background .16s,border-color .16s,box-shadow .16s;
+}
+body[data-panel=settings] .settings-toggle-card:has(>input:checked),
+body[data-panel=settings] .settings-toggle-card[aria-checked=true] {
+  background:color-mix(in srgb,var(--accent) 14%,var(--surface))!important;
+  border-color:var(--accent)!important;color:var(--text);box-shadow:inset 3px 0 var(--accent)!important;
+}
+body[data-panel=settings] .settings-toggle-card::after {
+  content:none;
+}
+body[data-panel=settings] .settings-toggle-card:has(>input:checked)::after,
+body[data-panel=settings] .settings-toggle-card[aria-checked=true]::after {content:none;}
+body[data-panel=settings] label.settings-toggle-card > input[type=checkbox] {
+  position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;z-index:1;
+}
+body[data-panel=settings] .settings-toggle-card:has(>input:focus-visible),
+body[data-panel=settings] .settings-toggle-card:focus-visible {outline:var(--focus-width) solid var(--focus);outline-offset:-2px;}
+body[data-panel=settings] .settings-toggle-card:has(input:disabled),
+body[data-panel=settings] .settings-toggle-card:disabled {opacity:.45;cursor:not-allowed;}
+body[data-panel=settings] .settings-toggle-card[hidden] {display:none!important;}
+body[data-panel=settings] .settings-toggle-card .switch-state,
+body[data-panel=settings] .settings-toggle-card .activity-switch-track {display:none!important;}
+.settings-save-toast {
+  position:fixed;inset:16px 20px auto auto;margin:0;padding:11px 16px;z-index:2147483647;
+  display:flex;align-items:center;gap:10px;max-width:min(460px,calc(100vw - 32px));
+  border:1px solid var(--good);border-radius:10px;background:var(--surface);color:var(--text);
+  box-shadow:0 8px 30px #0005;font:13px/1.5 var(--font-ui,system-ui);
+}
+.settings-save-toast[hidden]{display:none!important;}
+.settings-save-toast[data-state=saved]>span:first-child{color:var(--good);}
+.settings-save-toast[data-state=saving]{border-color:var(--line);}
+.settings-save-toast[data-state=error]{border-color:var(--bad);}
+.settings-save-toast button{padding:2px 8px;min-height:28px;}
+.settings-search-results{display:grid;gap:4px;padding:8px;max-height:65vh;overflow:auto;}
+.settings-search-results[hidden]{display:none;}
+.settings-search-result{display:grid;gap:3px;text-align:left;white-space:normal;padding:10px;}
+.settings-search-result small{color:var(--muted);font-size:11px;}
+.settings-focus-target{outline:1px solid var(--accent);outline-offset:1px;border-radius:5px;}
+.settings-spec-dialog .peak-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-block:18px;}
+.settings-spec-dialog .peak-fields>label{display:grid;gap:8px;min-width:0;}
+.settings-spec-dialog .peak-fields>label:has(input[type=checkbox]){grid-column:1/-1;}
+.settings-spec-dialog .peak-fields input{width:100%;box-sizing:border-box;}
+.settings-spec-dialog .peak-fields>p,.settings-spec-dialog .peak-fields>.peak-preset-picker{grid-column:1/-1;}
+.settings-inline-summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px;border:1px solid var(--line);border-radius:8px;}
+.settings-inline-summary strong{font-size:17px;overflow-wrap:anywhere;}
+.settings-inline-summary small{color:var(--muted);display:block;margin-top:4px;}
+.settings-compact-group{grid-column:1/-1;border:1px solid var(--line);border-radius:8px;padding:14px;}
+.settings-compact-group>summary{cursor:pointer;font-weight:600;}
+.settings-compact-group>.settings-fields{margin-top:18px;}
+.settings-tool-search{grid-column:1/-1;width:100%;margin-block:8px 12px;}
+.tool-toggle .tool-runtime-state{display:block;font-size:11px;font-weight:400;}
+.tool-toggle .tool-runtime-state[data-available=false]{color:var(--warn);}
+.settings-diagnostic-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:60vh;overflow:auto;}
+@media(max-width:650px){.settings-spec-dialog .peak-fields{grid-template-columns:minmax(0,1fr);}}
+@media(max-width:760px){body[data-panel=settings] .settings-layout{grid-template-columns:minmax(0,1fr);}body[data-panel=settings] .settings-aside{position:static;max-height:210px;}body[data-panel=settings] .settings-content{max-height:none;}body[data-panel=settings] #tool-list{grid-template-columns:minmax(0,1fr);}}
+
+/* Consistent sections and direct actions, without empty frames around buttons. */
+body[data-panel=settings] .settings-section{border-radius:10px;}
+body[data-panel=settings] .settings-fields>.field-group:first-child{border-top:0;padding-top:0;margin-top:0;}
+body[data-panel=settings] .settings-launcher{padding:0;border:0;background:transparent;}
+body[data-panel=settings] .settings-dialog-footer[hidden]{display:none!important;}
+body[data-panel=settings] .settings-dialog-head>button{font-size:var(--control-font-size);padding:8px;min-width:36px;min-height:36px;flex:0 0 auto;}
+body[data-panel=settings] :is(.settings-fold,.settings-compact-group,.fold-group){border-radius:8px;}
+body[data-panel=settings] :is(.settings-fold,.settings-compact-group,.fold-group)>summary{display:flex;justify-content:space-between;align-items:center;gap:12px;list-style:none;}
+body[data-panel=settings] :is(.settings-fold,.settings-compact-group,.fold-group)>summary::-webkit-details-marker{display:none;}
+body[data-panel=settings] :is(.settings-fold,.settings-compact-group,.fold-group)>summary::after{content:none;}
+body[data-panel=settings] :is(.settings-fold,.settings-compact-group,.fold-group)[open]>summary::after{transform:rotate(180deg);}
+body[data-panel=settings] .settings-empty{margin:8px 0;color:var(--muted);font-size:12px;}
+body[data-panel=settings] .search-service-row{gap:12px;align-items:center;}
+body[data-panel=settings] .search-service-options{display:grid;grid-template-columns:minmax(140px,220px) minmax(100px,180px);align-items:end;gap:16px;}
+body[data-panel=settings] .search-service-options>.setting-field{margin:0;}
+
+/* The response slider is a primary setting, always exposed. Its controls have
+   their own row rather than living inside a clickable disclosure heading. */
+body[data-panel=settings] .settings-activity{border:1px solid var(--line);background:var(--surface-2);}
+body[data-panel=settings] .settings-activity .activity-heading{display:flex;align-items:center;gap:10px;padding:16px 17px 0;}
+body[data-panel=settings] .settings-activity .activity-badge{display:none;}
+body[data-panel=settings] .settings-activity .activity-head-controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 17px 16px;margin:0;border-bottom:1px solid var(--line);}
+body[data-panel=settings] .settings-activity .activity-head-divider{display:none;}
+body[data-panel=settings] .settings-activity .activity-peak-control{padding:0;border:0;background:transparent;gap:8px;}
+body[data-panel=settings] .settings-activity .settings-fold-body{padding:16px 17px;}
+body[data-panel=settings] .settings-activity .activity-inner{border:0;padding-top:0;}
+
+/* Native selects remain bound and hidden; their cards expose the options and
+   support the usual radio-group arrow keys. */
+body[data-panel=settings] .setting-field>select[hidden]{display:none!important;}
+body[data-panel=settings] .settings-choice-cards{display:flex;flex-wrap:wrap;gap:6px;min-width:0;}
+body[data-panel=settings] .settings-choice-cards>button{min-height:40px;min-width:64px;flex:1 1 auto;padding:8px 12px;border-radius:7px;text-align:center;white-space:normal;}
+body[data-panel=settings] .settings-choice-cards>[aria-checked=true]{color:var(--text);background:color-mix(in srgb,var(--accent) 13%,var(--surface));border-color:var(--accent);box-shadow:inset 0 -2px var(--accent);}
+body[data-panel=settings] [data-appearance-group=colors]>.settings-fields{grid-template-columns:repeat(3,minmax(0,1fr));}
+body[data-panel=settings] [data-appearance-group=colors] .setting-field{display:grid;grid-template-columns:minmax(0,1fr) 40px;align-items:center;gap:10px;padding:8px;border:1px solid var(--line);border-radius:6px;}
+body[data-panel=settings] [data-appearance-group=colors] .field-title{font-size:12px;margin:0;}
+body[data-panel=settings] [data-appearance-group=colors] input[type=color]{width:40px;height:32px;padding:3px;cursor:pointer;}
+
+/* The live specimen uses the same space and card vocabulary as real settings. */
+body[data-panel=settings] .component-preview{padding:16px;border:1px solid var(--line);border-radius:8px;gap:14px;background:var(--surface-2);}
+body[data-panel=settings] .component-preview-head{display:flex;align-items:center;justify-content:space-between;padding:0;border:0;gap:10px;}
+body[data-panel=settings] .component-preview-head h4{margin:0;font-size:13px;}
+body[data-panel=settings] .component-preview-head p{margin:0;color:var(--muted);font-size:11px;}
+body[data-panel=settings] .component-preview-controls{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;padding:14px 0 0;border-bottom:0;align-items:end;}
+body[data-panel=settings] .component-preview-controls>.setting-field{position:relative;gap:6px;}
+body[data-panel=settings] .component-preview-controls .field-title{font-size:11px;}
+body[data-panel=settings] .component-preview-controls input[type=range]{height:36px;margin:0;width:100%;}
+body[data-panel=settings] .component-preview-value{position:absolute;right:0;top:0;font-size:11px;}
+body[data-panel=settings] .component-preview-specimens{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;}
+body[data-panel=settings] .component-preview-caption{font-size:11px;color:var(--muted);}
+body[data-panel=settings] .component-preview-type-title{font-size:22px;margin-top:4px;}
+body[data-panel=settings] .component-preview-digits{margin-top:4px;font-size:12px;}
+body[data-panel=settings] .component-preview-indicators{gap:14px;}
+body[data-panel=settings] .component-preview-icons{gap:8px;}
+body[data-panel=settings] .component-preview-icon{min-width:24px;}
+body[data-panel=settings] .component-preview-icon>.qq-icon{--icon-size-ratio:.9;}
+body[data-panel=settings] .component-preview .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+
+/* Security fields are grouped by effect rather than alternating unrelated
+   switches and limits across a generic grid. */
+body[data-panel=settings] .settings-preference-group{min-width:0;border-top:1px solid var(--line);padding-top:18px;container-type:inline-size;}
+body[data-panel=settings] .settings-preference-group:first-child{border:0;padding-top:0;}
+body[data-panel=settings] .settings-preference-group>h4{font-size:13px;margin:0 0 12px;}
+body[data-panel=settings] .settings-image-limits{grid-template-columns:repeat(3,minmax(0,1fr));}
+body[data-panel=settings] .settings-image-limits>.is-switch{grid-column:1/-1;}
+body[data-panel=settings] .settings-preference-group .setting-field:has(input[type=number]){max-width:180px;}
+body[data-panel=settings] .settings-preference-group :is(input,textarea){width:100%;box-sizing:border-box;}
+body[data-panel=settings] .settings-preference-group input[type=checkbox]{width:100%;}
+body[data-panel=settings] .zone-danger{border-radius:8px;}
+
+@container(max-width:500px){body[data-panel=settings] .settings-image-limits{grid-template-columns:minmax(0,1fr);}}
+@media(max-width:900px){
+  body[data-panel=settings] main>.head{flex-wrap:nowrap;}
+  body[data-panel=settings] main>.head>div:first-child{flex:1 1 auto;}
+  body[data-panel=settings] main>.head>.actions{flex:0 0 auto;margin-left:auto;}
+  body[data-panel=settings] .settings-layout{grid-template-columns:minmax(0,1fr);gap:12px;}
+  body[data-panel=settings] .settings-aside{position:static;max-height:none;gap:0;}
+  body[data-panel=settings] .settings-filter{padding:0 0 10px;border:0;}
+  body[data-panel=settings] .settings-sidebar{display:flex;gap:6px;padding:0 0 10px;overflow-x:auto;scrollbar-gutter:auto;}
+  body[data-panel=settings] .settings-sidebar[hidden]{display:none;}
+  body[data-panel=settings] .settings-group{display:contents;}
+  body[data-panel=settings] .settings-sidebar a{display:flex;flex:0 0 auto;padding:9px 12px;min-height:40px;border-radius:7px;}
+  body[data-panel=settings] .settings-sidebar .channel-mark{display:none;}
+  body[data-panel=settings] .settings-sidebar a.is-active{border-color:var(--accent);color:var(--accent);}
+  body[data-panel=settings] .settings-content{max-height:none;overflow:visible;padding:0;}
+  body[data-panel=settings] .settings-search-results{max-height:45vh;}
+}
+@media(max-width:680px){
+  body[data-panel=settings] .component-preview-controls{grid-template-columns:repeat(2,minmax(0,1fr));}
+  body[data-panel=settings] [data-appearance-group=colors]>.settings-fields{grid-template-columns:repeat(2,minmax(0,1fr));}
+}
+@media(max-width:440px){
+  body[data-panel=settings] .settings-section{padding:14px;}
+  body[data-panel=settings] .component-preview-specimens{grid-template-columns:minmax(0,1fr);}
+  body[data-panel=settings] [data-appearance-group=colors]>.settings-fields{grid-template-columns:minmax(0,1fr);}
+  body[data-panel=settings] .search-service-options{grid-template-columns:minmax(0,1fr);}
+}
+
+/* Shared drawn marks replace text glyphs, and keep the label as the hit area. */
+body[data-panel=settings] .settings-toggle-card::after,
+body[data-panel=settings] .palette-choice::after,
+body[data-panel=settings] details>summary::after{content:none!important;}
+body[data-panel=settings] details>summary{list-style:none;}
+body[data-panel=settings] details>summary::-webkit-details-marker{display:none;}
+body[data-panel=settings] .settings-toggle-indicator{display:grid;place-items:center;flex:0 0 auto;box-sizing:border-box;width:calc(var(--icon-size,20px)*.7 + 6px);height:calc(var(--icon-size,20px)*.7 + 6px);border:1.5px solid var(--line-strong);border-radius:50%;pointer-events:none;}
+body[data-panel=settings] .settings-toggle-indicator>.qq-icon{visibility:hidden;}
+body[data-panel=settings] .settings-toggle-indicator>.icon-warning{display:none;}
+body[data-panel=settings] .settings-toggle-card:has(>input:checked)>.settings-toggle-indicator,
+body[data-panel=settings] .settings-toggle-card[aria-checked=true]>.settings-toggle-indicator{border-color:var(--accent);color:var(--accent);}
+body[data-panel=settings] .settings-toggle-card:has(>input:checked)>.settings-toggle-indicator>.qq-icon,
+body[data-panel=settings] .settings-toggle-card[aria-checked=true]>.settings-toggle-indicator>.qq-icon{visibility:visible;}
+body[data-panel=settings] #tool-list .tool-toggle>.settings-toggle-indicator{grid-column:2;grid-row:1/3;}
+body[data-panel=settings] #tool-list .tool-toggle[data-available=false]:has(input:checked)>.settings-toggle-indicator{border-color:var(--warn);color:var(--warn);}
+body[data-panel=settings] #tool-list .tool-toggle[data-available=false]:has(input:checked)>.settings-toggle-indicator>.icon-check{display:none;}
+body[data-panel=settings] #tool-list .tool-toggle[data-available=false]:has(input:checked)>.settings-toggle-indicator>.icon-warning{display:block;}
+body[data-panel=settings] .palette-choice>.palette-check{position:absolute;right:4px;top:4px;display:none;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--bg);color:var(--text);}
+body[data-panel=settings] .palette-choice[aria-pressed=true]>.palette-check{display:grid;}
+body[data-panel=settings] .settings-fold-chevron{display:inline-flex;flex:0 0 auto;float:right;margin-left:8px;color:var(--muted);transition:transform var(--motion-fast);}
+body[data-panel=settings] details[open]>summary>.settings-fold-chevron{transform:rotate(180deg);}
+body[data-panel=settings] .channel-title{display:flex;align-items:center;gap:8px;}
+body[data-panel=settings] .channel-title>.qq-icon{flex:0 0 auto;}
+body[data-panel=settings] .settings-layout{grid-template-columns:var(--settings-sidebar-width,170px) minmax(0,1fr);}
+body[data-panel=settings] .settings-section{padding:var(--card-padding,18px);border-radius:var(--radius-card,var(--r-md));}
+body[data-panel=settings] :is(.settings-fold,.settings-compact-group,.settings-preference-group,.component-preview){border-radius:var(--radius-card,var(--r-md));}
+body[data-panel=settings] :is(.settings-toggle-card,.palette-choice,.settings-choice-cards>button){border-radius:var(--radius-button,var(--r-sm));}
+body[data-panel=settings] .settings-toggle-card{min-height:var(--control-height,46px);font-size:var(--control-font-size,12px);border-width:var(--border-width,1px)!important;}
+body[data-panel=settings] .activity-card{font-family:var(--font-sans);}
+body[data-panel=settings] .activity-card button{font-family:var(--font-sans);}
+body[data-panel=settings] .activity-card .activity-title h4{font-size:calc(var(--control-font-size,12px)*1.125);}
+body[data-panel=settings] .appearance-search{display:flex;align-items:center;gap:10px;margin:6px 0;}
+body[data-panel=settings] .appearance-search>input{flex:1;min-width:0;width:100%;}
+body[data-panel=settings] .personalization-field{padding:12px;border:var(--border-width,1px) solid var(--line);border-radius:var(--radius-input,var(--r-sm));gap:10px;min-width:0;align-content:start;}
+body[data-panel=settings] .personalization-field[hidden]{display:none!important;}
+body[data-panel=settings] .personalization-field-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;}
+body[data-panel=settings] .personalization-field-head>.field-title{font-size:var(--control-font-size,12px);margin:0;}
+body[data-panel=settings] .personalization-reset{display:grid;place-items:center;flex:0 0 auto;min-width:28px;min-height:28px;padding:4px;border:0;background:transparent;color:var(--muted);}
+body[data-panel=settings] .personalization-reset:hover{color:var(--accent);}
+body[data-panel=settings] .personalization-range{display:grid;grid-template-columns:minmax(50px,1fr) 82px auto;align-items:center;gap:8px;min-width:0;}
+body[data-panel=settings] .personalization-range>input{min-width:0;width:100%;box-sizing:border-box;}
+body[data-panel=settings] .personalization-range>input[type=number]{padding-inline:8px;}
+body[data-panel=settings] .personalization-unit{color:var(--muted);font-size:11px;min-width:12px;}
+body[data-panel=settings] .personalization-color{display:flex;align-items:center;gap:12px;}
+body[data-panel=settings] .personalization-color>input[type=color]{width:48px;height:40px;padding:3px;}
+body[data-panel=settings] .personalization-color>button{flex:1;}
+body[data-panel=settings] .personalization-boolean{grid-template-columns:minmax(0,1fr) auto;align-items:center;}
+body[data-panel=settings] .personalization-boolean>.personalization-toggle{min-width:0;}
+body[data-panel=settings] .personalization-auto{justify-self:start;min-height:32px;}
+body[data-panel=settings] .personalization-field .settings-choice-cards>button{overflow-wrap:anywhere;max-width:100%;min-width:60px;}
+body[data-panel=settings] .component-icon-browser{grid-column:1/-1;}
+body[data-panel=settings] .component-icon-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:8px;margin-top:12px;}
+body[data-panel=settings] .component-icon-grid>button{display:grid;place-items:center;min-width:0;min-height:44px;padding:8px;}
+@media(max-width:900px){body[data-panel=settings] .settings-layout{grid-template-columns:minmax(0,1fr);}}
+@media(max-width:440px){body[data-panel=settings] .personalization-range{grid-template-columns:minmax(40px,1fr) 70px auto;gap:6px;}}

@@ -2,12 +2,14 @@ import { button, destructiveButton, text, confirmAction } from '../ui.js';
 import { installDisposableDialog } from '../dialog-lifecycle.js';
 import { openModelPicker } from './model-picker.js';
 import { groupCandidates, normalizeQQList } from './list-choice.js';
+import {bindAutoSave,flushAutoSaves} from './auto-save.js';
+import {createIcon} from '../icons.js';
 export { editModelPrices } from './model-prices.js';
 
 function dialog(title) {
   const root = document.createElement('dialog'), body = document.createElement('article'), heading = document.createElement('h3');
   text(heading, title); root.className = 'settings-spec-dialog'; body.append(heading); root.append(body);
-  installDisposableDialog(root); document.body.append(root); root.showModal();
+  installDisposableDialog(root,{beforeClose:()=>flushAutoSaves(root)}); document.body.append(root); root.showModal();
   return { root, body };
 }
 function input(parent, label, value = '', type = 'text') {
@@ -26,7 +28,7 @@ function numeric(field, label, min, max) {
   if (!field.value.trim() || !Number.isFinite(n) || n < min || n > max) throw new Error(`${label}需要在 ${min}~${max} 之间`);
   return n;
 }
-function end(root, body, commit) { const actions = document.createElement('div'); actions.className = 'actions'; actions.append(button('保存', async () => { await commit(); root.close(); }, 'primary'), button('取消', () => root.close())); body.append(actions); }
+function end(root, body, commit,automatic=false) { const actions = document.createElement('div'); actions.className = 'actions';const submit=button('保存', async () => { await commit(); root.close(); }, 'primary');submit.hidden=automatic;actions.append(submit, button(automatic?'完成':'取消', () => root.close())); body.append(actions);if(automatic)return bindAutoSave(root,commit); }
 
 export async function editGroupResponse({ request, form, queue, save, render, isCurrent = () => true, onError = () => {} }) {
   const { root, body } = dialog('分群响应档位');
@@ -101,18 +103,18 @@ export function editFallbacks({ form, providers, queue, save, render }) {
       const refresh = () => { list.replaceChildren(); const selected = providers.find((p) => p.id === provider.value); for (const item of selected?.models ?? []) { const option = document.createElement('option'); option.value = typeof item === 'string' ? item : item.id; list.append(option); } };
       provider.addEventListener('change', () => { row.provider = provider.value; refresh(); }); model.addEventListener('input', () => row.model = model.value); refresh();
       box.append(button('从目录选择', () => openModelPicker({providers, title: '选择备选模型', current: row, onPick: choice => {
-        row.provider = choice.provider; row.model = choice.model; provider.value = choice.provider; model.value = choice.model; refresh();
+        row.provider = choice.provider; row.model = choice.model; provider.value = choice.provider; model.value = choice.model; refresh();autoSave.schedule();
       }})));
-      const up = button('上移', () => { [rows[index - 1], rows[index]] = [rows[index], rows[index - 1]]; draw(); }); up.disabled = index === 0;
-      const down = button('下移', () => { [rows[index], rows[index + 1]] = [rows[index + 1], rows[index]]; draw(); }); down.disabled = index === rows.length - 1;
-      box.append(up, down, destructiveButton('移除', () => { rows.splice(index, 1); draw(); }, {
+      const up = button('', () => { [rows[index - 1], rows[index]] = [rows[index], rows[index - 1]]; draw();autoSave.schedule(); });up.append(createIcon('arrow-up',{size:18}));up.title='上移';up.setAttribute('aria-label','上移');up.disabled = index === 0;
+      const down = button('', () => { [rows[index], rows[index + 1]] = [rows[index + 1], rows[index]]; draw();autoSave.schedule(); });down.append(createIcon('arrow-down',{size:18}));down.title='下移';down.setAttribute('aria-label','下移');down.disabled = index === rows.length - 1;
+      box.append(up, down, destructiveButton('移除', () => { rows.splice(index, 1); draw();autoSave.schedule(); }, {
         target: () => box, clicks: 2, key: () => JSON.stringify([row.provider, row.model]),
         impact: () => `将从当前草稿移除备选模型 ${row.model || `第 ${index + 1} 项`}，保存后生效。`,
       }));
     });
   };
   body.append(button('添加备选模型', () => { rows.push({ provider: '', model: '' }); draw(); })); draw();
-  end(root, body, async () => { if (rows.some((row) => !row.model?.trim())) throw new Error('每个备选项都需要模型 ID'); queue('api.fallbackModels', rows.map((row) => ({ model: row.model.trim(), ...(row.provider ? { provider: row.provider } : {}) }))); await save(); render(); });
+  const autoSave=end(root, body, async () => { if (rows.some((row) => !row.model?.trim())) throw new Error('请选择备选模型'); queue('api.fallbackModels', rows.map((row) => ({ model: row.model.trim(), ...(row.provider ? { provider: row.provider } : {}) }))); await save(); },true);
 }
 
 export function importCatalog({ request, save, reload }) {

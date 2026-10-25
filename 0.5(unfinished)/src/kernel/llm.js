@@ -1,11 +1,12 @@
-// LLM 调用链：chatCompletion（单次非流式）+ chatCompletionWithRetry（候选降级+退避）+
+// LLM 调用链：chatCompletion（流式或完整响应）+ chatCompletionWithRetry（候选降级+退避）+
 // isRetryableError / addUsage / thinking 方言适配。
 // 契约：notes/06c-llm.md 全文（§3 请求契约 / §3.4 重试 / §3.6 方言表 / §5 用量）。
-// 非流式硬编码 stream:false；超时默认 180s（下限 5s）；退避 1s/2s 无抖动；abort 不可重试。
+// 会话提供 onDelta 时读取真实流；其它调用保留完整响应。abort 不可重试。
 
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveThinkingPolicy } from './thinking-policy.js';
+import {readChatStream} from './llm-stream.js';
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 const OPENCODE_SESSION = `qqagent-${crypto.randomUUID()}`;
@@ -231,9 +232,10 @@ export async function chatCompletion(args) {
   let body = {
     model: api.model,
     messages,
-    stream: false, // 硬编码
+    stream: typeof args.onDelta==='function',
   };
   if (tools && tools.length > 0) { body.tools = tools; body.tool_choice = toolChoice; }
+  if(body.stream)body.stream_options={include_usage:true};
   if (maxTokens > 0) body.max_tokens = Math.floor(maxTokens);
   const temp = temperature === null ? Number(cfg?.api?.temperature ?? 0.8) : Number(temperature);
   if (Number.isFinite(temp)) body.temperature = temp;
@@ -303,12 +305,15 @@ export async function chatCompletion(args) {
   let degraded = false;
   let degradeNote = null;
   let receivedResult = null;
+  let streamFallback=false,streamOptionsFallback=false;
+  const progress=value=>{if(controller.signal.aborted)return;try{args.onDelta?.(value);}catch{/* Display observers cannot replay or fail a paid model request. */}};
 
   async function attemptOnce(reqBody) {
     if (signal?.aborted) throw signal.reason ?? new Error('已中止');
     let res, requestJson;
     try {
       args.onRequest?.({ api: { ...api }, model: reqBody.model });
+      if(reqBody.stream)progress({reset:true,content:'',reasoning:''});
       requestJson = JSON.stringify(reqBody);
       res = await doFetch(url, { method: 'POST', headers, body: requestJson, signal: controller.signal });
     } catch (err) {
@@ -323,6 +328,13 @@ export async function chatCompletion(args) {
     }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      // Explicit protocol rejection is safe to retry before any response delta.
+      if(reqBody.stream&&[400,415,422,501].includes(res.status)&&/stream|流式/i.test(text)){
+        if(!streamOptionsFallback&&reqBody.stream_options&&/stream_options|include_usage/i.test(text)){
+          streamOptionsFallback=true;const next={...reqBody};delete next.stream_options;return attemptOnce(next);
+        }
+        if(!streamFallback){streamFallback=true;const next={...reqBody,stream:false};delete next.stream_options;return attemptOnce(next);}
+      }
       // 400/422 参数被拒的一次性降级重试（06c §3.7）
       if ((res.status === 400 || res.status === 422) && !degraded) {
         let rejected = false;
@@ -368,6 +380,7 @@ export async function chatCompletion(args) {
       err.status = res.status;
       throw err;
     }
+    if(/text\/event-stream/i.test(res.headers.get('content-type')||''))return readChatStream(res,{signal:controller.signal,onDelta:progress,reasoningOf:extractReasoning});
     let data;
     const rawText = await res.text();
     try { data = JSON.parse(rawText); }

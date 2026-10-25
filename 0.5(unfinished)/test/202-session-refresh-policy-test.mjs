@@ -7,7 +7,7 @@ try{
   await f.page.addInitScript(()=>{window.__intervals=new Map();const add=setInterval.bind(window),del=clearInterval.bind(window);window.setInterval=(fn,ms,...args)=>{const id=add(fn,ms,...args);window.__intervals.set(id,ms);return id;};window.clearInterval=id=>{window.__intervals.delete(id);del(id);};});
   await f.page.goto(f.base);await f.page.locator('#nav button[data-panel=sessions]').click();await f.frame.locator('#sessions-panel[data-ready=true]').waitFor();await f.frame.locator('#follow').uncheck();
   const policy=()=>f.frame.locator('body').evaluate(async()=>{const m=await import('/panels/refresh-policy.js');return m.getRefreshInterval();});const timers=()=>f.frame.locator('body').evaluate(()=>[...window.__intervals.values()]);await wait(async()=>await policy()===60000);
-  const s=f.kernel.sessions.create('group:20201',{trigger:'QA coalesced run'});await f.frame.locator('#reload').click();const row=f.frame.locator(`[data-session="${s.id}"]`);await row.waitFor();await row.click();await f.frame.locator('.session-body').waitFor();await new Promise(r=>setTimeout(r,200));await wait(async()=>JSON.stringify((await timers()).sort((a,b)=>a-b))==='[100,60000]');
+  const s=f.kernel.sessions.create('group:20201',{trigger:'QA coalesced run'});await f.frame.locator('#reload').click();const row=f.frame.locator(`[data-session="${s.id}"]`);await row.waitFor();await row.click();await f.frame.locator('.session-body').waitFor();await new Promise(r=>setTimeout(r,200));assert.deepEqual(await timers(),[],'a waiting session without a deadline owns no periodic clock or network work');
   let reads=0,detailReads=0,inflight=0,maxInflight=0,first=true;const captured=gate();heldList=gate();
   f.page.on('request',req=>{if(req.method()==='GET'&&new URL(req.url()).pathname===`/api/sessions/${s.id}`)detailReads++;});
   await f.page.route(f.base+'/api/sessions?**',async route=>{reads++;inflight++;maxInflight=Math.max(maxInflight,inflight);try{const response=await route.fetch();if(first){first=false;captured.release();await heldList.promise;}await route.fulfill({response});}finally{inflight--;}});
@@ -16,15 +16,15 @@ try{
   await row.filter({hasText:'已回复'}).waitFor();await f.frame.locator('.session-body').filter({hasText:'已回复'}).waitFor();assert.equal(reads,2,'100 updates and an in-flight terminal event require one read and one trailing reconciliation');assert.equal(detailReads,1,'only the accepted terminal batch refreshes selected detail');assert.equal(maxInflight,1);await wait(async()=>!(await timers()).length);
   const burst={listReads:reads,detailReads,maxInflight};
   await f.page.unroute(f.base+'/api/sessions?**');
-  const pending=f.kernel.sessions.create('group:20202',{trigger:'QA dynamic interval'});await f.frame.locator(`[data-session="${pending.id}"]`).waitFor();await wait(async()=>JSON.stringify(await timers())==='[60000]');
+  const pending=f.kernel.sessions.create('group:20202',{trigger:'QA dynamic interval'});await f.frame.locator(`[data-session="${pending.id}"]`).waitFor();await wait(async()=>JSON.stringify(await timers())==='[]');
   let configFirst=true,configOnlyStatusReads=0;const configCaptured=gate();heldConfig=gate();
   f.page.on('request',req=>{if(req.method()==='GET'&&new URL(req.url()).pathname==='/api/status')configOnlyStatusReads++;});
   await f.page.route(f.base+'/api/config',async route=>{if(route.request().method()!=='GET')return route.continue();const response=await route.fetch();if(configFirst){configFirst=false;configCaptured.release();await heldConfig.promise;}await route.fulfill({response});});
   f.kernel.bus.emit('status',{configUpdated:true});await configCaptured.promise;
-  const changed=await f.request('POST','/api/config',{ui:{refreshMs:1000}});assert.equal(changed.status,200);heldConfig.release();await wait(async()=>await policy()===1000);await wait(async()=>JSON.stringify(await timers())==='[1000]');
+  const changed=await f.request('POST','/api/config',{ui:{refreshMs:1000}});assert.equal(changed.status,200);heldConfig.release();await wait(async()=>await policy()===1000);await wait(async()=>JSON.stringify(await timers())==='[]');
   assert.equal(configOnlyStatusReads,0,'configuration notifications must not query runtime status or trigger a process-status poll');
   await f.frame.locator('body').evaluate(()=>window.addEventListener('message',e=>{if(e.data?.method==='shell.event'&&e.data.params?.name?.startsWith('session-'))e.stopImmediatePropagation();},{capture:true}));
-  f.kernel.sessions.finish(pending.id,'done');await f.frame.locator(`[data-session="${pending.id}"]`).filter({hasText:'已回复'}).waitFor({timeout:5000});await wait(async()=>!(await timers()).length);
+  f.kernel.sessions.finish(pending.id,'done');f.kernel.httpServer.broadcast('hello',{});await f.frame.locator(`[data-session="${pending.id}"]`).filter({hasText:'已回复'}).waitFor({timeout:5000});await wait(async()=>!(await timers()).length);
   assert.equal((await f.request('POST','/api/config',{ui:{refreshMs:60000}})).status,200);await wait(async()=>await policy()===60000);
   let plainConfigReads=0;f.page.on('request',req=>{if(req.method()==='GET'&&new URL(req.url()).pathname==='/api/config')plainConfigReads++;});for(let i=0;i<20;i++)f.kernel.bus.emit('status',{qa202Plain:true});await new Promise(r=>setTimeout(r,150));assert.equal(plainConfigReads,0,'ordinary status notifications cannot trigger host config-read loops');
   assert.deepEqual(f.errors,[]);assert.equal(f.outbound(),0);console.log(JSON.stringify({test:202,events:101,...burst,intervalChangedWithoutReload:true,staleConfigRejected:true}));
@@ -40,6 +40,6 @@ const shared=await modelUiFixture({config:{ui:{refreshMs:60000}},uiAssetPath:'pa
 try{
   await shared.page.clock.install();await shared.page.addInitScript(()=>{window.__policyIntervals=new Map();const add=setInterval.bind(window),del=clearInterval.bind(window);window.setInterval=(fn,ms,...args)=>{const id=add(fn,ms,...args);window.__policyIntervals.set(id,ms);return id;};window.clearInterval=id=>{window.__policyIntervals.delete(id);del(id);};});
   const run=shared.kernel.sessions.create('group:20204',{trigger:'shared appended interval'});let configReads=0;shared.page.on('request',req=>{if(req.method()==='GET'&&new URL(req.url()).pathname==='/api/config')configReads++;});await shared.page.goto(shared.base);await shared.page.locator('#nav button[data-panel=sessions]').click();await shared.frame.locator(`[data-session="${run.id}"]`).waitFor();
-  await wait(async()=>await shared.frame.locator('body').evaluate(()=>[...window.__policyIntervals.values()].includes(2500)));const before=configReads;await shared.page.clock.runFor(2600);await wait(async()=>configReads>before);assert.deepEqual(shared.errors,[]);assert.equal(shared.outbound(),0);
-  console.log('✓ one appended refresh-policy asset changes both host polling and the session authority ticker despite stored 60000ms');
+  assert.equal(await shared.frame.locator('body').evaluate(()=>[...window.__policyIntervals.values()].includes(2500)),false);const before=configReads;await shared.page.clock.runFor(2600);assert.equal(configReads,before);assert.deepEqual(shared.errors,[]);assert.equal(shared.outbound(),0);
+  console.log('✓ legacy refresh preference cannot reactivate periodic host or session reads');
 }finally{await shared.close();}

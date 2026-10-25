@@ -88,12 +88,15 @@ try{
   throw error;
 }finally{await f.close();}
 
-const replacement=await modelUiFixture({uiAssetPath:'panels/sessions/trace-view.js',uiAsset:"export function renderSessionTrace(body){body.textContent='追加文件提供的会话详情';body.dataset.appendedTrace='true';}"});
+const replacement=await modelUiFixture({config:{allow:{groups:['25103']}},uiAssetPath:'panels/sessions/trace-view.js',uiAsset:"export function renderSessionTrace(body,data){body.textContent='追加文件提供的会话详情';body.dataset.appendedTrace='true';body.dataset.appendedReasoning=data.activeStep?.reasoning||'';}"});
 try{
   const s=replacement.kernel.sessions.create('group:25103',{trigger:'追加视图验证'});replacement.kernel.sessions.finish(s.id,'done');
   await replacement.page.locator('#nav button[data-panel=sessions]').click();await replacement.frame.locator(`[data-session="${s.id}"]`).click();
   await replacement.frame.locator('.session-body[data-appended-trace=true]').waitFor();
   assert.equal(await replacement.frame.locator('.session-body').innerText(),'追加文件提供的会话详情');assert.deepEqual(replacement.errors,[]);assert.equal(replacement.outbound(),0);
-  console.log('✓ 251 append-only trace replacement is consumed by the real default panel');
+  const running=replacement.kernel.sessions.create('group:25103',{trigger:'旧版追加视图接收流式内容'});await replacement.frame.locator(`[data-session="${running.id}"]`).click();
+  replacement.kernel.sessions.stream(running,{kind:'generation',state:'running',messageIndex:0,startedAt:Date.now(),elapsedMs:0,streamId:'replacement-stream',streamAttempt:0,revision:1,content:'',reasoning:'兼容视图的第一段'}, {reset:true,reasoning:'兼容视图的第一段',content:'',fromRevision:0,revision:1});
+  await wait(async()=>await replacement.frame.locator('.session-body').getAttribute('data-appended-reasoning')==='兼容视图的第一段');assert.deepEqual(replacement.errors,[]);assert.equal(replacement.outbound(),0);
+  console.log('✓ 251 legacy append-only trace replacement receives archives and live stream snapshots without requiring an incremental renderer');
 }finally{await replacement.close();}
 if(evidence)fs.writeFileSync(path.join(evidence,'result.json'),JSON.stringify({passed:true,at:new Date().toISOString(),headed:process.env.QA_HEADED==='1',realApplication:true,opaqueFrames:true,externalRequests:0,liveConsoleAccessed:false,scenarios:['legacy flow and compact columns','group title and no ordinals','safe text and raw JSON','fold state across refresh','same mounted button reused','immediate next selection during exit','pending SSE lock','failed deletion retry','narrow layout','append-only trace override']},null,2)+'\n');

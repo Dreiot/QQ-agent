@@ -117,7 +117,9 @@ console.log('=== E. shell 视觉语言与面板一致 ===');
   assert.ok(!/@media\s*\(prefers-color-scheme:\s*light\)/.test(shell), 'shell 不再跟随系统自动切浅色（避免未校准配色）');
   assert.ok(!/@media\s*\(prefers-color-scheme:\s*light\)/.test(read('ui/panels/common.css')), '面板不跟随系统自动切浅色');
   const icons = read('ui/panels/icons.js');
-  assert.ok(icons.includes('http://www.w3.org/2000/svg') && icons.includes("setAttribute('stroke', 'currentColor')") && icons.includes("setAttribute('fill', 'currentColor')"), '统一 SVG 图标的轮廓和实心部件均继承主题色');
+  // Attribute assignment can be data-driven; the rendered stroke and solid
+  // fill are verified against the actual control colour in test 63.
+  assert.ok(icons.includes('http://www.w3.org/2000/svg') && icons.includes('currentColor'), 'SVG 图标使用命名空间与主题色；实际描边和填色由浏览器检查');
   const emptyRule = /\.empty::before\s*\{([^}]*)\}/.exec(shell)?.[1] || '';
   assert.match(emptyRule, /background:\s*currentColor/, '空态遮罩填色继承主题色');
   const maskSource = /(?:^|[;\s])mask:\s*url\(['"]([^'"]+\.svg)['"]\)/.exec(emptyRule)?.[1];

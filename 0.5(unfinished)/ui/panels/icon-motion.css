@@ -1,11 +1,13 @@
-/* Simple theme-colored glyphs. Selection effects leave their base geometry
-   unchanged after cancellation; ordinary hover/focus adds no glyph animation.
-   Readiness glyphs use explicit data-icon-active and the same bounded effects. */
-.qq-icon[data-icon-motion] { transform-origin: center; }
-.qq-icon [data-icon-part], .qq-icon [data-icon-role] { transform-box: fill-box; transform-origin: center; }
-.qq-icon[data-icon-motion="usage"] [data-icon-part], .qq-icon[data-icon-motion="usage"] [data-icon-role^="meter-"] { transform-origin: center bottom; }
-.qq-icon [data-icon-orbit] { transform-box: view-box; transform-origin: 50% 50%; }
-.qq-icon[data-icon-motion], .qq-icon[data-icon-motion] [data-icon-part], .qq-icon[data-icon-motion] [data-icon-role], .qq-icon[data-icon-motion] [data-icon-orbit] { transition-property: none; }
+/* Theme size changes preserve each symbol's button/navigation/brand hierarchy. */
+.qq-icon { width: calc(var(--icon-size, 20px) * var(--icon-size-ratio, 1)); height: calc(var(--icon-size, 20px) * var(--icon-size-ratio, 1)); stroke-width: var(--icon-stroke, 1.8); }
+.qq-icon.icon-emblem { filter: drop-shadow(0 0 3px rgb(61 155 255 / .55)); }
+.brand-emblem > .qq-icon.icon-emblem { width: var(--brand-icon-size, 36px); height: var(--brand-icon-size, 36px); }
+.qq-icon[data-icon-motion] { transform-box: view-box; transform-origin: 50% 50%; }
+.qq-icon [data-icon-part] { transform-box: fill-box; transform-origin: center; }
+.qq-icon[data-icon-motion="usage"] [data-icon-role^="meter-"] { transform-origin: center bottom; }
+.qq-icon[data-icon-motion="clock"] [data-icon-role="hands"] { transform-box: view-box; transform-origin: 50% 50%; }
+.qq-icon[data-icon-motion="refresh"] [data-icon-part] { transform-box: view-box; transform-origin: 50% 50%; }
+.qq-icon[data-icon-motion], .qq-icon[data-icon-motion] [data-icon-part] { transition-property: none; }
 @media (prefers-reduced-motion: reduce) {
   .qq-icon[data-icon-motion], .qq-icon[data-icon-motion] * { animation: none; transition: none; }
 }

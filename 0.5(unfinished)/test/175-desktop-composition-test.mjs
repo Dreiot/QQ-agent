@@ -30,6 +30,7 @@ for (const phase of ['normal', 'preflight-failure', 'async-preflight']) {
       fs.rmSync(root, { recursive: true, force: true });
     });
     for (const name of ['src', 'bundled']) fs.cpSync(path.join(workspace, name), path.join(root, name), { recursive: true });
+    fs.cpSync(path.join(workspace, 'scripts/lib'), path.join(root, 'scripts/lib'), { recursive: true });
     fs.mkdirSync(path.join(root, 'electron'));
     fs.copyFileSync(path.join(workspace, 'electron/main.js'), path.join(root, 'electron/main.js'));
     const rendererLeaveSource = path.join(workspace, 'electron/renderer-leave.js'), rendererLeaveCopy = path.join(root, 'electron/renderer-leave.js');

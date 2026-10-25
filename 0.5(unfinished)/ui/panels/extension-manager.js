@@ -1,6 +1,7 @@
 import { request } from './panel-client.js';
 import { $, clear, row, button, destructiveButton, confirmAction, managePermissions } from './ui.js';
 import { installDisposableDialog } from './dialog-lifecycle.js';
+import {createExtensionUpdateControls} from './extension-updates.js';
 
 const secretKey = (key, rule) => /(apikey|api_key|accesstoken|access_token|communitykey|cookie|secret|password|privatekey|private_key|^token$)/i.test(key) || rule.secret || rule.sensitive || rule.format === 'password';
 const capabilityLoads = new WeakMap();
@@ -179,14 +180,15 @@ export function settingsDialog(extension, reload) {
     input.addEventListener('input', () => dirty.set(key, { input, rule, secret }));
     input.addEventListener('change', () => dirty.set(key, { input, rule, secret }));
     label.append(heading, input);
+    if(input.type==='checkbox')label.classList.add('extension-setting-toggle');
     if (secret) label.append(destructiveButton(`清除 ${rule.title || rule.label || key}`, () => {
       input.value = ''; input.placeholder = '保存后清除此密钥'; dirty.set(key, { input, rule, secret, cleared: true });
     }, { clicks: 3, target: () => label, key: () => JSON.stringify([extension.id, key, input.value]), impact: '将此密钥标记为清除；点击“保存修改”后生效。' }));
     if (rule.description) { const help = document.createElement('small'); help.textContent = rule.description; label.append(help); }
     form.append(label);
   }
-  const save = document.createElement('button'); save.type = 'button'; save.textContent = '保存修改';
-  form.append(feedback, save, button('取消', () => dialog.close()));
+  const save = document.createElement('button'); save.type = 'button'; save.className='primary';save.textContent = '保存修改';
+  const actions=document.createElement('div');actions.className='actions';actions.append(save,button('取消',()=>dialog.close()));form.append(feedback,actions);
   const commit = async (event) => {
     event.preventDefault(); if (!form.reportValidity()) return; feedback.textContent = ''; save.disabled = true;
     try {
@@ -277,7 +279,7 @@ function placeNodes(parent,nodes){
   const wanted=new Set(nodes);for(const node of [...parent.children])if(!wanted.has(node))node.remove();
   nodes.forEach((node,index)=>{if(parent.children[index]!==node)parent.insertBefore(node,parent.children[index]||null);});
 }
-export function renderExtensions(items,kind,reload){
+export function renderExtensions(items,kind,reload,updates=[]){
   const list=$('#list');let view=catalogues.get(list);
   if(!view){
     const defaults=document.createElement('details'),summary=document.createElement('summary'),grid=document.createElement('div'),empty=document.createElement('div');
@@ -300,9 +302,9 @@ export function renderExtensions(items,kind,reload){
         await request('POST',`/api/skills/${encodeURIComponent(current.id)}`,{enabled:!current.enabled});await entry.reload();
       });
       const settings=button('设置',()=>settingsDialog(entry.extension,entry.reload));
-      const hot=button('热更新',async()=>{
+      const hot=button('重新加载',async()=>{
         const result=await request('POST',`/api/skills/${encodeURIComponent(entry.extension.id)}/hot-reload`,{});await entry.reload();
-        if(!result.ok)throw new Error(result.error||'热更新失败，旧实例可能仍在运行');
+        if(!result.ok)throw new Error(result.error||'重新加载失败，请查看扩展状态');
         if(result.needsReauthorize&&await confirmAction('扩展已更新，需要重新确认新版的权限。现在查看？'))await managePermissions(result.skill);
       });
       hot.classList.add('extension-hot-action');
@@ -310,9 +312,11 @@ export function renderExtensions(items,kind,reload){
       const card=row('','',[toggle,settings,hot,permissions]),description=document.createElement('p'),identity=document.createElement('small'),diagnostics=document.createElement('div'),dependencies=document.createElement('small'),location=document.createElement('details'),locationTitle=document.createElement('summary'),path=document.createElement('code');
       card.dataset.extensionId=extension.id;card.dataset.motionKey=`extension:${extension.root}:${extension.id}`;
       description.className='extension-description';identity.className='extension-id';diagnostics.className='extension-diagnostics';dependencies.className='extension-dependencies';location.dataset.extensionPath=extension.id;locationTitle.textContent='根目录';path.className='extension-root-path';location.append(locationTitle,path);card.append(description,identity,diagnostics,dependencies,location);
-      Object.assign(entry,{card,title:card.querySelector('strong'),summary:card.querySelector('.muted'),actions:card.querySelector('.actions'),toggle,settings,hot,permissions,description,identity,diagnostics,dependencies,path});view.entries.set(extension.id,entry);
+      Object.assign(entry,{card,title:card.querySelector('strong'),summary:card.querySelector('.muted'),actions:card.querySelector('.actions'),toggle,settings,hot,permissions,description,identity,diagnostics,dependencies,path});
+      entry.updateControls=createExtensionUpdateControls(entry);entry.actions.append(entry.updateControls.check,entry.updateControls.update);card.append(entry.updateControls.note);view.entries.set(extension.id,entry);
     }
     Object.assign(entry,{extension,reload});
+    entry.updateControls.render(updates.find(row=>row.id===extension.id));
     if(extension.root!=='bundled'){
       let uninstall=uninstalls.get(extension.id);
       if(!uninstall){
@@ -329,10 +333,12 @@ export function renderExtensions(items,kind,reload){
     putText(entry.title,extension.name||extension.id);putText(entry.summary,`加载：${extension.loaded?'已加载':'未加载'} · 开关：${extension.enabled?'启用':'停用'} · 可用：${extension.available?'是':'否'} · ${source} · ${extension.version||'未知版本'}`);
     putText(entry.toggle,extension.enabled?'停用':'启用');entry.settings.hidden=!Object.keys(extension.configSchema||{}).length;entry.hot.hidden=!extension.enabled||extension.code==='disabled';entry.permissions.hidden=extension.root==='bundled'||!extension.fingerprint;
     putText(entry.description,extension.description||'');entry.description.hidden=!extension.description;putText(entry.identity,extension.id);putText(entry.dependencies,extension.requires?.length?`所需能力：${extension.requires.join('、')}`:'');entry.dependencies.hidden=!extension.requires?.length;putText(entry.path,extension.dir||'暂未提供安装路径；可重扫磁盘更新。');
+    for(const control of [entry.toggle,entry.settings,entry.hot,entry.permissions,entry.uninstall?.button])if(control)control.disabled=entry.updateState?.status==='updating';
     const diagnostics=extensionDiagnostics(extension);for(let i=entry.diagnostics.children.length-1;i>=diagnostics.length;i--)entry.diagnostics.children[i].remove();
     diagnostics.forEach((diagnostic,index)=>{let note=entry.diagnostics.children[index];if(!note){note=document.createElement('p');entry.diagnostics.append(note);}const className=diagnostic.error?'error':'muted';if(note.className!==className)note.className=className;putText(note,diagnostic.text);});
   }
   const query=$('#search').value.trim().toLowerCase(),shown=[...view.entries.values()].filter(({extension:item})=>`${item.id} ${item.name||''} ${item.description||''}`.toLowerCase().includes(query));
+  const check=document.querySelector('#check-updates');if(check)check.disabled=!items.some(item=>item.root!=='bundled'&&item.update);
   const defaults=shown.filter(entry=>entry.extension.root==='bundled').map(entry=>entry.card),installed=shown.filter(entry=>entry.extension.root!=='bundled').map(entry=>entry.card);
   putText(view.summary,`默认能力 · ${defaults.length} 项`);placeNodes(view.grid,defaults);
   putText(view.empty,`没有匹配的${kind==='skill'?'技能':'插件'}；可以安装 ZIP，或重扫磁盘。`);placeNodes(list,[...(defaults.length?[view.defaults]:[]),...installed,...(!shown.length?[view.empty]:[])]);

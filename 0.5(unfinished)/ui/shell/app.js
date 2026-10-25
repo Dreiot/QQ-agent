@@ -14,14 +14,28 @@ import {publishQuoteFromHost} from './quote-publication.js';
 // ui.uikit 是结构化的（mode + light/dark/custom），要先解析出当前生效方案再应用
 import {resolveScheme} from '../panels/theme.js';
 import {createIcon} from '../panels/icons.js';
-import {installMotion} from '../panels/motion.js';
+import {LOCAL_PROTOCOL_RELEASES,localProtocolLoginUrl} from '../panels/local-protocol-links.js';
+import {installMotion,observeInterfaceMotion} from '../panels/motion.js';
 import {createRefreshQueue} from './refresh-queue.js';
 import {createPanelRecovery} from './panel-recovery.js';
 import {createStartupNavigation} from './startup-navigation.js';
 import {createDestructiveFeedback} from './destructive-feedback.js';
 import {createPauseControls} from './pause-controls.js';
+import {createAccountSwitcher} from './account-switcher.js';
+import {readPanelTarget,panelLocationUrl} from './account-navigation.js';
+import {accountStorageKey,currentAccountScope} from '../panels/account-scope.js';
 
 installMotion(document);
+// Preference edits settle existing shell transitions at their real layout
+// endpoints. New navigation gestures use the updated CSS duration tokens.
+const stopShellMotion=observeInterfaceMotion(document,()=>{
+  const shell=document.querySelector('.app-shell');
+  for(const animation of shell?.getAnimations?.({subtree:true})||[]){
+    if(typeof animation.transitionProperty==='string')animation.cancel();
+  }
+  for(const notice of document.querySelectorAll('.update-notice'))for(const animation of notice.getAnimations?.()||[])if(animation.animationName==='qqa-update-enter')animation.cancel();
+});
+window.addEventListener('pagehide',stopShellMotion,{once:true});
 document.querySelector('#brand-emblem')?.append(createIcon('emblem',{size:36}));
 document.querySelector('#navigation-dismiss')?.append(createIcon('close',{size:16}));
 const readinessNames={onebot:'OneBot',model:'模型配置'};
@@ -37,11 +51,12 @@ for(const [id,name] of Object.entries(readinessNames)){
 // Local shell layout only: resizing navigation never remounts a plugin or writes config.
 const collapseButton=document.querySelector('#brand-emblem');
 const compactViewport=window.matchMedia('(max-width: 640px)');
-const collapseKey='qq-agent.sidebar-collapsed';
+const collapseKey=accountStorageKey('qq-agent.sidebar-collapsed');
 let collapsePreference=null;
+let compactCollapsePreference=null;
 try{const saved=localStorage.getItem(collapseKey);if(saved==='true'||saved==='false')collapsePreference=saved==='true';}catch{}
 function syncNavigationCollapse(){
-  const collapsed=collapsePreference??compactViewport.matches;
+  const collapsed=compactViewport.matches?(compactCollapsePreference??true):(collapsePreference??false);
   document.body.dataset.railCollapsed=String(collapsed);
   const hidden=document.body.dataset.sidebar==='hidden';
   collapseButton.setAttribute('aria-expanded',String(hidden?document.body.classList.contains('navigation-peek'):!collapsed));
@@ -50,8 +65,9 @@ function syncNavigationCollapse(){
 }
 collapseButton.addEventListener('click',()=>{
   if(document.body.dataset.sidebar==='hidden'){setNavigationPeek(false,{restoreFocus:true});return;}
-  collapsePreference=document.body.dataset.railCollapsed!=='true';
-  try{localStorage.setItem(collapseKey,String(collapsePreference));}catch{}
+  const next=document.body.dataset.railCollapsed!=='true';
+  if(compactViewport.matches)compactCollapsePreference=next;
+  else{collapsePreference=next;try{localStorage.setItem(collapseKey,String(collapsePreference));}catch{}}
   syncNavigationCollapse();
 });
 compactViewport.addEventListener('change',syncNavigationCollapse);
@@ -59,13 +75,17 @@ syncNavigationCollapse();
 
 const consoleAuth=await createConsoleAuth(),token=consoleAuth.token;
 const api=new ApiClient({token}),state=new StateStore();
+const controlApi=new ApiClient({token,base:'',onTokenChange:next=>{api.setToken(next);accountSwitcher?.setToken(next);}});
+let panelTransition=Promise.resolve(),accountSwitcher=null,currentPanelId=null;
 let sse=null;
 api.recoverAuth=async({token:failedToken})=>{
   if(!await consoleAuth.recover(failedToken))return false;
   api.setToken(consoleAuth.token);
+  controlApi.setToken(consoleAuth.token);
   if(sse&&sse.token!==consoleAuth.token)sse.setToken(consoleAuth.token);
   return true;
 };
+controlApi.recoverAuth=api.recoverAuth;
 let tokenManagement=null;
 const captchaDiagnostics=createCaptchaDiagnostics();
 const host=document.querySelector('#panel-host'),nav=document.querySelector('#nav'),indicator=document.querySelector('#sse'),dot=document.querySelector('#status-dot');
@@ -100,7 +120,7 @@ const navigationPreferenceObserver=new MutationObserver(()=>{
 });
 navigationPreferenceObserver.observe(document.body,{attributes:true,attributeFilter:['data-sidebar']});
 setNavigationPeek(false);
-let runtimeStatus={},runtimeConfig=null,runtimeConfigGeneration=-1,pauseBusy=false,pauseControls=null,statusRevision=0,configGeneration=0,statusPollAgain=false,statusPollClosed=false;
+let runtimeStatus={},runtimeConfig=null,runtimeConfigGeneration=-1,pauseBusy=false,pauseControls=null,statusRevision=0,configGeneration=0,statusPollAgain=false,statusPollClosed=false,hasMultipleAccounts=currentAccountScope.id!=='primary';
 function setText(node,value){const text=String(value);if(node.textContent!==text)node.textContent=text;}
 function setAttribute(node,name,value){const text=String(value);if(node.getAttribute(name)!==text)node.setAttribute(name,text);}
 function setReadiness(id,kind,label,detail){
@@ -114,11 +134,11 @@ function setReadiness(id,kind,label,detail){
 function renderRuntime(){
   const paused=runtimeStatus.orchestrator?.paused;
   pauseButton.disabled=pauseBusy||typeof paused!=='boolean';
-  setControlContent(pauseButton,pauseBusy?'正在更新…':paused?'恢复运行':'全局暂停',paused?'play':'pause');
+  setControlContent(pauseButton,pauseBusy?'正在更新…':paused?hasMultipleAccounts?'恢复当前账号':'恢复运行':hasMultipleAccounts?'暂停当前账号':'全局暂停',paused?'play':'pause');
   setAttribute(pauseButton,'aria-pressed',paused===true);
   pauseButton.classList.toggle('is-paused',paused===true);
-  setAttribute(pauseButton,'title',paused?'恢复自动响应；暂停期间的消息保留为未读。':'暂停自动响应；新消息继续接收并保留为未读。');
-  setText(runtimeLabel,typeof paused!=='boolean'?'读取运行状态…':paused?'全局已暂停 · 保留未读':'自动响应已启用');
+  setAttribute(pauseButton,'title',(hasMultipleAccounts?'仅影响当前 QQ 账号。':'')+(paused?'恢复自动响应；暂停期间的消息保留为未读。':'暂停自动响应；新消息继续接收并保留为未读。'));
+  setText(runtimeLabel,typeof paused!=='boolean'?'读取运行状态…':paused?hasMultipleAccounts?'当前账号已暂停 · 保留未读':'全局已暂停 · 保留未读':hasMultipleAccounts?'当前账号自动响应已启用':'自动响应已启用');
   setAttribute(runtimeLabel,'data-state',typeof paused!=='boolean'?'unknown':paused?'warn':'good');
   runtimeLabel.classList.toggle('is-paused',paused===true);
   pauseControls?.sync();
@@ -145,7 +165,7 @@ function applyRuntimeStatus(patch){
   if(!patch||typeof patch!=='object')return;
   const next={...runtimeStatus,...patch};
   // Config changes are one-shot SSE notifications, not cached runtime state.
-  delete next.configUpdated;
+  delete next.configUpdated;delete next.extensionUpdates;delete next.available;
   // Transport notifications are provider snapshots. Optional readiness fields
   // from a previous provider must not survive its replacement or reset.
   for(const key of ['orchestrator','usage'])if(patch[key]&&typeof patch[key]==='object')next[key]={...runtimeStatus[key],...patch[key]};
@@ -174,10 +194,19 @@ const startupNavigation=createStartupNavigation();
 // config never holds the initial page indefinitely or adds a second host poll.
 const initialConfigGeneration=configGeneration,initialConfigRead=api.get('/api/config');initialConfigRead.catch(()=>{});
 let initialConfigPollPending=true;
-function readConfigForStatus(){if(initialConfigPollPending){initialConfigPollPending=false;return{promise:initialConfigRead,generation:initialConfigGeneration};}return{promise:api.get('/api/config'),generation:configGeneration};}
+let configSnapshotRead=null;
+function readConfigForStatus(){
+ const generation=configGeneration;
+ if(initialConfigPollPending&&initialConfigGeneration!==generation)initialConfigPollPending=false;
+ if(runtimeConfig&&runtimeConfigGeneration===generation)return{promise:Promise.resolve(runtimeConfig),generation};
+ if(configSnapshotRead?.generation===generation)return configSnapshotRead;
+ const promise=initialConfigPollPending?(initialConfigPollPending=false,initialConfigRead):api.get('/api/config');
+ const read={promise,generation};configSnapshotRead=read;
+ promise.finally(()=>{if(configSnapshotRead===read)configSnapshotRead=null;}).catch(()=>{});return read;
+}
 const registry=new PanelRegistry({
   onDestructiveProgress:(progress,phase)=>destructiveFeedback.update(progress,phase),
-  frameHost:host,api,onNotify:text=>toast(text),
+  frameHost:host,api,controlApi,onNotify:text=>toast(text),
   onUpdateAction:params=>{if(!updateNotice)throw new Error('版本检查尚未就绪');return updateNotice.action(params);},
   onManageConsoleToken:()=>{if(!tokenManagement)throw new Error('控制台尚未就绪');return tokenManagement.open();},
   onCaptchaDiagnostics:()=>captchaDiagnostics.open(),
@@ -193,14 +222,14 @@ const registry=new PanelRegistry({
     if(signal.aborted)throw signal.reason;
     return api.request('POST','/api/community/feedback',{nickname:payload?.nickname,text:payload?.text,images:payload?.images,captchaVerifyParam},undefined,{signal});
   },
-  onOpenExternal:target=>{
-    const url=externalLinks[target];
+  onOpenExternal:(target,context)=>{
+    const url=['local-protocol-login','protocol-login-native'].includes(target)?localProtocolLoginUrl(context?.protocolUrl):LOCAL_PROTOCOL_RELEASES[target]||externalLinks[target];
     if(!url)throw new Error('不支持的社区网页');
     window.open(url,'_blank','noopener,noreferrer');
     return {ok:true};
   },
 });
-updateNotice=createUpdateNotice({api,onStatus:status=>registry.emit('update-status',status)});
+updateNotice=createUpdateNotice({api:controlApi,onStatus:status=>registry.emit('update-status',status)});
 function renderNav(){
   const existing=new Map([...nav.querySelectorAll('button[data-panel]')].map(button=>[button.dataset.panel,button]));
   const panels=registry.list(),ids=new Set(panels.map(panel=>panel.id));
@@ -229,6 +258,11 @@ function renderNav(){
 function setNavActive(button,active){button.classList.toggle('active',active);if(active)setAttribute(button,'aria-current','page');else if(button.hasAttribute('aria-current'))button.removeAttribute('aria-current');}
 function updateWorkspace(){
   const panels=registry.list(),index=panels.findIndex(panel=>panel.id===registry.current?.id),panel=panels[index];
+  if(panel){
+    currentPanelId=panel.id;
+    const url=panelLocationUrl(window.location,panel.id);
+    if(url!==window.location.pathname+window.location.search+window.location.hash){try{history.replaceState(history.state,'',url);}catch{}}
+  }
   const title=document.querySelector('#workspace-title'),description=document.querySelector('#workspace-description'),number=document.querySelector('#workspace-index');
   // User panels may provide a canvas without their own heading; retain their
   // registered title in the compact host toolbar without inspecting the iframe.
@@ -247,7 +281,6 @@ function panelFailed(error){
 const manifest=await api.get('/api/panels').then(data=>{validatePanelManifest(data);consoleAuth.confirm();return data;}).catch(error=>{panelFailed(error);toast(error.message,'error');return {panels:[]};});
 for(const panel of manifest.panels||[]){try{registry.register(panel);}catch(error){toast(`已拒绝不安全面板：${error.message}`,'error');}}
 renderNav();
-let panelTransition=Promise.resolve();
 function open(id,options={}) {
   if(options.automatic!==true)startupNavigation.navigate();
   const {automatic,...mountOptions}=options;
@@ -257,6 +290,8 @@ function open(id,options={}) {
 async function initialTarget(isCurrent=()=>true){
   const current=()=>!statusPollClosed&&isCurrent();
   const first=registry.list()[0];if(!first||!current())return null;
+  const requested=readPanelTarget(window.location.search,registry.list());
+  if(requested){startupNavigation.navigate();return requested;}
   const firstDecision=!startupNavigation.attempted;
   const selected=await startupNavigation.select({panels:registry.list(),readConfig:async()=>{
     const fresh=()=>runtimeConfig&&runtimeConfigGeneration===configGeneration?runtimeConfig:null;
@@ -290,12 +325,46 @@ function renderPermissionCard(request){if(!request?.id||document.querySelector(`
 async function refreshPermissionRequests(){try{const result=await api.get('/api/permissions/pending');for(const request of result.requests||[])renderPermissionCard(request);}catch(error){if(error.status!==404)toast(error.message,'error');}}
 function applyRuntimeConfig(config,generation=configGeneration){
   runtimeConfig=config;runtimeConfigGeneration=generation;state.set({config:runtimeConfig});const previous=getRefreshInterval(),interval=setRefreshInterval(runtimeConfig.ui?.refreshMs);
-  if(previous!==interval){registry.emit('refresh-policy',{interval});if(!statusPollBusy)scheduleStatusPoll();}
+  if(previous!==interval)registry.emit('refresh-policy',{interval});
   syncThemeFromConfig(runtimeConfig);renderRuntime();
 }
-const configRefresh=createRefreshQueue(async({isCurrent})=>{const generation=configGeneration,config=await api.get('/api/config');if(isCurrent()&&!statusPollClosed&&generation===configGeneration)applyRuntimeConfig(config,generation);});
-sse=new SseClient({token:api.token,recoverAuth:api.recoverAuth,onEvent:(name,payload)=>{if(name==='status'&&payload?.configUpdated){++configGeneration;void configRefresh.request().catch(()=>{});}if(name==='status')applyRuntimeStatus(payload);else{state.set({[name]:payload});const runtimeKey={'onebot-status':'onebot'}[name];if(runtimeKey)applyRuntimeStatus({[runtimeKey]:payload});}registry.emit(name,payload);if(['plugin-loaded','plugin-unloaded','plugin-error','permission-decision'].includes(name)||(name==='hello'&&!registry.list().length))refreshPanels();if(name==='permission-ask')renderPermissionCard(payload);if(name==='permission-decision'&&payload?.decision!=='ask'){const card=document.querySelector(`[data-permission-id="${CSS.escape(payload.requestId||'')}"]`);card?.remove();}},onState:(status,error)=>{consoleAuth.invalidate(error);if(error?.status===401&&!registry.list().length){panelFailed(error);if(!consoleAuth.automatic)sse.close();}const labels={connecting:'SSE 连接中',connected:'SSE 已连接',reconnecting:'SSE 重连中'};indicator.textContent=error?`${labels[status]||'SSE 异常'}：${error.message}`:labels[status]||'SSE 异常';dot.classList.toggle('online',status==='connected');}});
-tokenManagement=createTokenManagement({api,auth:consoleAuth,sse});
+const configRefresh=createRefreshQueue(async({isCurrent})=>{const {generation,promise}=readConfigForStatus(),config=await promise;if(isCurrent()&&!statusPollClosed&&generation===configGeneration)applyRuntimeConfig(config,generation);});
+async function navigateAccount(url){
+  try{
+    if(window.navigation?.navigate)await window.navigation.navigate(url).committed;
+    else window.location.assign(url);
+  }catch(error){
+    // Navigation can be cancelled before the new document commits. The old
+    // panel has already saved and left, so reacquire its own account lease.
+    document.querySelector('.app-shell').inert=false;
+    registry.dispose();
+    if(currentPanelId)await registry.mount(currentPanelId);
+    renderNav();throw error;
+  }
+}
+accountSwitcher=createAccountSwitcher({host:document.querySelector('#account-controls'),api:controlApi,notify:toast,navigate:navigateAccount,getCurrentPanel:()=>currentPanelId,onAccounts:rows=>{registry.emit('accounts',{});const multiple=rows.length>1;if(multiple!==hasMultipleAccounts){hasMultipleAccounts=multiple;renderRuntime();}},openConnections:account=>open('settings',{section:'onebot',connectQQ:account?.accountId||true}),beforeDisconnect:async()=>{
+  await panelTransition;const previous=registry.current?.id;await registry.unmount();return async()=>{if(previous)await registry.mount(previous);};
+},beforeSwitch:async()=>{
+  await panelTransition;await registry.flush();
+  // Retain the rendered account until the browser captures it. Pagehide owns
+  // disposal, keeping all old requests and events bound to the old document.
+  document.querySelector('.app-shell').inert=true;
+}});
+const seenExtensionUpdates=new Set();
+let extensionUpdateToast=null,extensionUpdateToastTimer=null;
+function notifyExtensionUpdates(available=[]){
+  const fresh=available.filter(row=>row&&typeof row.id==='string'&&typeof row.version==='string'&&!seenExtensionUpdates.has(row.id+'@'+row.version));
+  for(const row of available)seenExtensionUpdates.add(row.id+'@'+row.version);
+  for(const kind of ['skill','plugin']){const button=nav.querySelector('[data-panel="'+(kind==='skill'?'skills':'plugins')+'"]');if(button)button.title=available.some(row=>row.kind===kind)?'有可用更新':'';}
+  if(!available.length){extensionUpdateToast?.remove();return;}
+  if(!fresh.length&&!extensionUpdateToast?.isConnected)return;
+  if(!extensionUpdateToast?.isConnected){extensionUpdateToast=document.createElement('div');extensionUpdateToast.className='toast';extensionUpdateToast.setAttribute('role','status');extensionUpdateToast.append(document.createElement('span'),document.createElement('button'));toastRegion.append(extensionUpdateToast);}
+  const item=extensionUpdateToast,label=item.querySelector('span'),view=item.querySelector('button');label.textContent=available.length===1?(available[0].name||available[0].id)+' 有新版 '+available[0].version:'发现 '+available.length+' 个扩展更新';
+  view.textContent='查看更新';view.onclick=()=>{void open(available[0].kind==='plugin'?'plugins':'skills');item.remove();};clearTimeout(extensionUpdateToastTimer);extensionUpdateToastTimer=setTimeout(()=>item.remove(),12000);
+}
+async function readAvailableExtensionUpdates(){try{const result=await api.get('/api/extensions/updates');notifyExtensionUpdates((result.updates||[]).filter(row=>row.status==='available').map(row=>({...row,version:row.latestVersion})));}catch{/* Older or replaced consoles can keep local reload controls. */}}
+sse=new SseClient({token:api.token,base:api.base,recoverAuth:api.recoverAuth,onEvent:(name,payload)=>{if(['accounts','hello','onebot-status','local-protocols'].includes(name))void accountSwitcher?.refresh();if(name==='session-delta'){registry.emit(name,payload);return;}if(['hello','session-end'].includes(name))scheduleStatusPoll();if(name==='hello'){void refreshPermissionRequests();void readAvailableExtensionUpdates();}if(name==='status'&&payload?.extensionUpdates)notifyExtensionUpdates(payload.available||[]);if(name==='status'&&payload?.configUpdated){++configGeneration;void configRefresh.request().catch(()=>{});}if(name==='status')applyRuntimeStatus(payload);else{state.set({[name]:payload});const runtimeKey={'onebot-status':'onebot'}[name];if(runtimeKey)applyRuntimeStatus({[runtimeKey]:payload});}registry.emit(name,payload);if(['plugin-loaded','plugin-unloaded','plugin-error','permission-decision'].includes(name)||(name==='hello'&&!registry.list().length))refreshPanels();if(name==='permission-ask')renderPermissionCard(payload);if(name==='permission-decision'&&payload?.decision!=='ask'){const card=document.querySelector(`[data-permission-id="${CSS.escape(payload.requestId||'')}"]`);card?.remove();}},onState:(status,error)=>{consoleAuth.invalidate(error);if(error?.status===401&&!registry.list().length){panelFailed(error);if(!consoleAuth.automatic)sse.close();}const labels={connecting:'正在连接',connected:'实时同步',reconnecting:'正在重连'};indicator.textContent=error?`${labels[status]||'连接异常'}：${error.message}`:labels[status]||'SSE 异常';dot.classList.toggle('online',status==='connected');}});
+tokenManagement=createTokenManagement({api:controlApi,auth:consoleAuth,sse});
 panelRecovery=createPanelRecovery({host,api,auth:consoleAuth,onRecovered:async data=>{
   if(statusPollClosed)return;
   const task=panelTransition.catch(()=>{}).then(()=>applyPanelManifest(data));panelTransition=task.catch(()=>{});await task;
@@ -342,16 +411,18 @@ async function pollStatus(){
   } catch (error) {
     // SSE 已经提供连接状态；轮询失败不弹 toast，避免后台网络抖动刷屏。
     state.set({statusError: error.message});
-  } finally { statusPollBusy=false;if(!statusPollClosed){if(statusPollAgain){statusPollAgain=false;void pollStatus();}else scheduleStatusPoll();} }
+  } finally { statusPollBusy=false;if(!statusPollClosed&&statusPollAgain){statusPollAgain=false;scheduleStatusPoll();} }
 }
 function scheduleStatusPoll(){
   clearTimeout(statusPollTimer);
-  const refreshMs=getRefreshInterval();
-  statusPollTimer=setTimeout(pollStatus, refreshMs);
+  if(statusPollClosed||document.hidden)return;
+  statusPollTimer=setTimeout(pollStatus,120);
 }
-pollStatus();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)scheduleStatusPoll();});
+const initialRuntimeReady=pollStatus();
+void Promise.allSettled([initialRuntimeReady,registry.whenContentReady({timeout:5000})]).then(()=>window.dispatchEvent(new Event('qqa-account-content-ready')));
 void updateNotice.check();
 window.addEventListener('beforeunload',event=>registry.beforeUnload(event));
-window.addEventListener('pagehide',event=>{if(event.persisted)return;statusPollClosed=true;startupNavigation.dispose();configRefresh.close();updateNotice.dispose();consoleAuth.dispose();clearTimeout(statusPollTimer);panelRefresh.close();panelRecovery?.dispose();destructiveFeedback.dispose();navigationPreferenceObserver.disconnect();compactViewport.removeEventListener('change',syncNavigationCollapse);sse.close();registry.dispose();});
+window.addEventListener('pagehide',event=>{if(event.persisted)return;statusPollClosed=true;startupNavigation.dispose();configRefresh.close();updateNotice.dispose();consoleAuth.dispose();clearTimeout(statusPollTimer);panelRefresh.close();panelRecovery?.dispose();destructiveFeedback.dispose();navigationPreferenceObserver.disconnect();compactViewport.removeEventListener('change',syncNavigationCollapse);sse.close();registry.dispose();accountSwitcher?.dispose();});
 window.qqAgentShell?.onPrepareLeave?.(async()=>{try{await registry.flush();return{ok:true};}catch(error){toast(error.message,'error');return{ok:false,error:error.message};}});
 export {confirm,toast,state};

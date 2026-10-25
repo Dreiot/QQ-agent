@@ -27,6 +27,8 @@ website/qa/
 
 # Independently managed runtime trees can contain credentials and account data.
 /runtime/
+/protocols/*
+!/protocols/README.md
 **/config/
 **/data/
 **/logs/

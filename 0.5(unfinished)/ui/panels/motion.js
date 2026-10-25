@@ -1,5 +1,6 @@
 // Shared, opt-in motion for the shell and isolated panel documents.
 // Effects never hold up a submit/RPC, write layout styles or run a permanent frame loop.
+import {installPressFeedback} from './press-feedback.js';
 const installed = new WeakMap();
 const documents = new WeakMap();
 const MAX_BATCH = 12;
@@ -8,6 +9,31 @@ const INITIAL = '.brand,.rail-heading,#nav,.workspace-context,.head,.toolbar,mai
 const APPEND = '.message,.toast,.permission-ask,.permission-card,.list-item,.settings-section,[data-motion="append"]';
 const HIDDEN = '[hidden],.hidden,.is-hidden,dialog:not([open]),[data-motion="off"]';
 const DEFAULT_PANELS = new Set(['sessions','chats','memory','usage','skills','plugins','logs','settings','community']);
+
+/** Read only visual preferences; these values never scale behavior timers. */
+export function interfaceMotion(doc, media = doc?.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)')) {
+  const style = doc?.defaultView?.getComputedStyle?.(doc.documentElement);
+  const value = (name, fallback, max) => {
+    const raw = style?.getPropertyValue?.(name)?.trim();
+    return raw && Number.isFinite(Number(raw)) ? Math.min(max, Math.max(0, Number(raw))) : fallback;
+  };
+  const duration = value('--motion-duration-factor', 1, 3), scale = value('--motion-scale', 1, 3);
+  return { enabled: !media?.matches && doc?.body?.dataset?.interfaceMotion !== 'off' && duration > 0, duration, scale };
+}
+
+/** Observe theme roots, never per-frame element styles or unrelated config. */
+export function observeInterfaceMotion(doc, changed) {
+  const view = doc?.defaultView;
+  let previous = JSON.stringify(interfaceMotion(doc)), observer;
+  if (view?.MutationObserver) {
+    observer = new view.MutationObserver(() => {
+      const next = interfaceMotion(doc), signature = JSON.stringify(next);
+      if (signature !== previous) { previous = signature; changed(next); }
+    });
+    for (const root of [doc.documentElement, doc.body]) if (root) observer.observe(root, { attributes: true, attributeFilter: ['style', 'class', 'data-interface-motion'] });
+  }
+  return () => observer?.disconnect();
+}
 
 function documentOf(root) {
   return root?.nodeType === 9 ? root : root?.ownerDocument;
@@ -27,14 +53,16 @@ function releasePolicy(runtime) {
   runtime.doc.removeEventListener('visibilitychange', runtime.policyChanged);
   if (runtime.media?.removeEventListener) runtime.media.removeEventListener('change', runtime.policyChanged);
   else runtime.media?.removeListener?.(runtime.policyChanged);
+  runtime.unobservePolicy?.();
   runtime.watching = false;
 }
 
 function watchPolicy(runtime) {
   if (runtime.watching) return;
   runtime.policyChanged = () => {
-    if (runtime.doc.visibilityState === 'hidden' || runtime.media?.matches) cancel(runtime);
+    if (runtime.doc.visibilityState === 'hidden' || !interfaceMotion(runtime.doc, runtime.media).enabled) cancel(runtime);
   };
+  runtime.unobservePolicy = observeInterfaceMotion(runtime.doc, () => cancel(runtime));
   runtime.doc.addEventListener('visibilitychange', runtime.policyChanged);
   if (runtime.media?.addEventListener) runtime.media.addEventListener('change', runtime.policyChanged);
   else runtime.media?.addListener?.(runtime.policyChanged);
@@ -42,6 +70,7 @@ function watchPolicy(runtime) {
 }
 
 function cancel(runtime, predicate = () => true) {
+  for(const stop of runtime.pressEffects||[])stop(predicate);
   for (const [node, animation] of runtime.active) {
     if (!predicate(node)) continue;
     runtime.active.delete(node);
@@ -62,15 +91,16 @@ export function animateMount(node, { delay = 0, duration = 220, offset = 8 } = {
   const doc = documentOf(node);
   if (!doc || typeof node?.animate !== 'function') return null;
   const runtime = runtimeFor(doc);
-  if (runtime.media?.matches || !visible(node, doc)) return null;
+  const policy = interfaceMotion(doc, runtime.media);
+  if (!policy.enabled || !visible(node, doc)) return null;
   cancel(runtime, target => target === node);
   const bounded = (value, fallback, max) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(0, Number(value))) : fallback;
   let animation;
   try {
     animation = node.animate([
-      { opacity: 0, transform: `translate3d(0,${bounded(offset, 8, 20)}px,0)` },
+      { opacity: 0, transform: `translate3d(0,${bounded(offset, 8, 20) * policy.scale}px,0)` },
       { opacity: 1, transform: 'translate3d(0,0,0)' },
-    ], { duration: bounded(duration, 220, 400), delay: bounded(delay, 0, 180), easing: EASING, fill: 'backwards' });
+    ], { duration: bounded(duration, 220, 400) * policy.duration, delay: bounded(delay, 0, 180) * policy.duration, easing: EASING, fill: 'backwards' });
   } catch { return null; }
   runtime.active.set(node, animation);
   watchPolicy(runtime);
@@ -92,6 +122,9 @@ export function installMotion(root = typeof document !== 'undefined' ? document 
   if (!doc || !view) return () => {};
   const runtime = runtimeFor(doc);
   const seen = new WeakSet();
+  const pressed=installPressFeedback(root,{readPolicy:()=>interfaceMotion(doc,runtime.media)});
+  const stopPressed=predicate=>pressed.cancelWhere(predicate);
+  (runtime.pressEffects??=new Set()).add(stopPressed);
   // Data changes in built-in pages are reading updates, not fresh entrances.
   // Page entry, explicit dialogs/folds and opt-in appended effects still animate.
   const readingUpdates=DEFAULT_PANELS.has(doc.body?.dataset?.panel);
@@ -100,7 +133,7 @@ export function installMotion(root = typeof document !== 'undefined' ? document 
   const cancelWithin = node => cancel(runtime, target => target === node || node?.contains?.(target));
   const now = () => view.performance?.now?.() ?? Date.now();
   const batch = (nodes, { repeat = false, stagger = true } = {}) => {
-    if (runtime.media?.matches || doc.visibilityState === 'hidden') return;
+    if (!interfaceMotion(doc, runtime.media).enabled || doc.visibilityState === 'hidden') return;
     let count = 0;
     for (const node of nodes) {
       if (count >= MAX_BATCH) break;
@@ -170,6 +203,7 @@ export function installMotion(root = typeof document !== 'undefined' ? document 
   const cleanup = () => {
     if (disposed) return;
     disposed = true;
+    runtime.pressEffects.delete(stopPressed);pressed.dispose();
     observer?.disconnect();
     root.removeEventListener('click', selection, true);
     root.removeEventListener('toggle', toggle, true);

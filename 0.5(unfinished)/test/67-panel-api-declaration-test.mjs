@@ -12,6 +12,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { registerLocalProtocolRoutes } from '../src/console/local-protocols.js';
+import { registerAccountRoutes } from '../src/accounts/routes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'ui/panels/manifest.json'), 'utf8'));
@@ -122,6 +124,17 @@ console.log('=== B. 声明的每条端点后端都真实存在 ===');
   for (const r of extractRoutes(src)) {
     routes.push({ method: r.isRegex ? '*' : r.method, segments: toSegments(r.raw, r.isRegex) });
   }
+  // Delegated routes include computed action paths. Record the real registrar
+  // without invoking handlers so every method/path still needs a concrete
+  // backend registration; no prefix or wildcard exception is introduced.
+  const registrar={route(method,pattern,handler){
+    assert.ok(['GET','POST','PUT','DELETE'].includes(method));
+    assert.equal(typeof pattern,'string');assert.ok(pattern.startsWith('/api/'));
+    assert.equal(typeof handler,'function');
+    routes.push({method,segments:toSegments(pattern,false)});
+  }};
+  registerLocalProtocolRoutes(registrar);
+  registerAccountRoutes(registrar);
 
   const missing = [];
   let checked = 0;

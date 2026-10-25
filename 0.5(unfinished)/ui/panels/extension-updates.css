@@ -1,0 +1,6 @@
+.extension-update-status{margin:10px 0 0;padding-top:10px;border-top:1px solid var(--line);font-size:12px;overflow-wrap:anywhere;}
+.extension-update-status.is-good{color:var(--good);}
+.extension-update-dialog{box-sizing:border-box;width:min(620px,calc(100vw - 32px));}
+.extension-update-dialog .pre{max-height:35vh;overflow:auto;}
+.extension-update-dialog>p{overflow-wrap:anywhere;}
+.extension-update-versions{font-size:18px;color:var(--accent);font-variant-numeric:tabular-nums;}

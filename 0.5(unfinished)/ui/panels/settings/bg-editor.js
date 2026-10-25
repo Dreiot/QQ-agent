@@ -1,3 +1,4 @@
+import {accountResourceUrl} from '../account-scope.js';
 // 背景图编辑器（16:9 范围选定 + 旋转）
 // ---------------------------------------------------------------------------
 // 需求（用户原话）：应用背景图之前应提供一个简单的编辑功能，
@@ -31,8 +32,7 @@ const MAX_SCALE = 1;
 function normalizeSrc(url) {
   const v = String(url ?? '').trim();
   if (!v) return '';
-  if (/^\/api\/uikit\/background\//.test(v)) return v.replace('/api/uikit/background/', '/ui/backgrounds/');
-  return v;
+  return accountResourceUrl(v);
 }
 
 /**

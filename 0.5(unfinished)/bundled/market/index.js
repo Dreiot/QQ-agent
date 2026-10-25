@@ -7,7 +7,7 @@ export function createDefaultMarketClient(ctx, { signal = () => null, config = {
   const environment = ctx.capability('host.environment');
   if (!environment?.dataDir) throw new Error('扩展市场缺少 host.environment');
   return createCommunityMarketAdapters({
-    dataDir: environment.dataDir, appRoot: environment.appRoot, config,
+    dataDir: environment.dataDir, appRoot: environment.appRoot, extensionRoot: environment.extensionRoot, config,
     signal,
     installZip: (...args) => {
       const installer = ctx.capability('extensions.installZip');

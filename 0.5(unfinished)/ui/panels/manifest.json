@@ -295,6 +295,18 @@
         {
           "method": "GET",
           "path": "/api/extensions/authoring-context"
+        },
+        {
+          "method": "GET",
+          "path": "/api/extensions/updates"
+        },
+        {
+          "method": "POST",
+          "path": "/api/extensions/updates/check"
+        },
+        {
+          "method": "POST",
+          "path": "/api/extensions/:id/update"
         }
       ]
     },
@@ -359,6 +371,18 @@
         {
           "method": "GET",
           "path": "/api/extensions/authoring-context"
+        },
+        {
+          "method": "GET",
+          "path": "/api/extensions/updates"
+        },
+        {
+          "method": "POST",
+          "path": "/api/extensions/updates/check"
+        },
+        {
+          "method": "POST",
+          "path": "/api/extensions/:id/update"
         }
       ]
     },
@@ -411,6 +435,74 @@
         ]
       },
       "api": [
+        {
+          "method": "GET",
+          "path": "/api/local-protocols"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/rescan"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/open-folder"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/start"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/stop"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/settings"
+        },
+        {
+          "method": "GET",
+          "path": "/api/local-protocols/output"
+        },
+        {
+          "method": "GET",
+          "path": "/api/local-protocols/login"
+        },
+        {
+          "method": "GET",
+          "path": "/api/accounts"
+        },
+        {
+          "method": "POST",
+          "path": "/api/accounts/start"
+        },
+        {
+          "method": "POST",
+          "path": "/api/accounts/stop"
+        },
+        {
+          "method": "POST",
+          "path": "/api/accounts/remove"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/login/connect"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/login/refresh"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/login/inject"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/login/close"
+        },
+        {
+          "method": "POST",
+          "path": "/api/local-protocols/login/visibility"
+        },
         {
           "method": "GET",
           "path": "/api/blocklist-members"

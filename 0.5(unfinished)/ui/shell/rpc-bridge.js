@@ -1,13 +1,19 @@
 import { publicPanelTheme } from '../panels/theme.js';
 import { hostApiRequestTimeout } from '../panels/request-timeouts.js';
 import {createSettingsSaveLifecycle} from './settings-save-lifecycle.js';
+import {LOCAL_PROTOCOL_RELEASES,localProtocolPageUrl,localProtocolLoginUrl} from '../panels/local-protocol-links.js';
+import {currentAccountScope,normalizeAccountId} from '../panels/account-scope.js';
+import {accountNavigationUrl} from './account-navigation.js';
 
 const RPC={INVALID:-32600,NOT_FOUND:-32601,FORBIDDEN:-32003,INTERNAL:-32603};
-const RPC_METHODS=new Set(['settings.saveState','settings.save','api.request','ctx.call','ctx.getConfig','ctx.notify','ui.confirm','ui.notify','ui.openExternal','ui.destructiveProgress','console.manageToken','console.update','ui.captchaDiagnostics','community.authenticateMarket','community.cancelMarketAuthentication','community.publishMarket','community.cancelMarketPublish','community.publishQuote','community.cancelQuotePublish','community.publishFeedback','community.cancelFeedbackPublish','theme.apply','panel.ready','panel.flushed']);
+const RPC_METHODS=new Set(['settings.saveState','settings.save','api.request','ctx.call','ctx.getConfig','ctx.notify','ui.confirm','ui.notify','ui.openExternal','ui.destructiveProgress','console.manageToken','console.update','ui.captchaDiagnostics','community.authenticateMarket','community.cancelMarketAuthentication','community.publishMarket','community.cancelMarketPublish','community.publishQuote','community.cancelQuotePublish','community.publishFeedback','community.cancelFeedbackPublish','theme.apply','panel.ready','panel.contentReady','panel.flushed']);
+const PROTOCOL_LOGIN_POSTS=new Set(['connect','refresh','inject','close','visibility'].map(action=>'/api/local-protocols/login/'+action));
+const validProtocolSession=value=>typeof value==='string'&&value.length>0&&value.length<=256;
 const EXTERNAL_TARGETS_BY_PANEL=new Map([
   ['community',new Set(['persona-plaza-btn','feedback-btn','plugin-market-btn','open-site-btn'])],
   ['skills',new Set(['skill-market-btn'])],
   ['plugins',new Set(['plugin-market-btn'])],
+  ['settings',new Set([...Object.keys(LOCAL_PROTOCOL_RELEASES),'local-protocol-login','protocol-login-native'])],
 ]);
 
 function routePattern(path) {
@@ -16,14 +22,16 @@ function routePattern(path) {
 
 /** Opaque-origin iframes require targetOrigin="*"; source + panel id + one-time nonce authenticate every message. */
 export class RpcBridge {
-  constructor({frame,api,manifest,timeout=15000,onUserCall=async()=>{throw new Error('当前运行环境未提供该能力');},onUserConfig=async()=>({}),onNotify=()=>{},onReady=null,onTheme=null,onOpenExternal=null,onPublishQuote=null,onPublishFeedback=null,onManageConsoleToken=null,onUpdateAction=null,onPublishMarket=null,onAuthenticateMarket=null,onCaptchaDiagnostics=null,onDestructiveProgress=null,viewState=null}={}) {
-    this.frame=frame; this.api=api; this.manifest=manifest??{}; this.timeout=timeout; this.onUserCall=onUserCall; this.onUserConfig=onUserConfig; this.onNotify=onNotify; this.onReady=onReady; this.onTheme=onTheme; this.onOpenExternal=onOpenExternal;this.onPublishQuote=onPublishQuote;this.quoteController=null;
+  constructor({frame,api,controlApi=api,manifest,timeout=15000,onUserCall=async()=>{throw new Error('当前运行环境未提供该能力');},onUserConfig=async()=>({}),onNotify=()=>{},onReady=null,onTheme=null,onOpenExternal=null,onPublishQuote=null,onPublishFeedback=null,onManageConsoleToken=null,onUpdateAction=null,onPublishMarket=null,onAuthenticateMarket=null,onCaptchaDiagnostics=null,onDestructiveProgress=null,viewState=null,onAccountStopped=id=>{if(id===currentAccountScope.id&&id!=='primary')window.location.assign(accountNavigationUrl('primary',manifest?.id));}}={}) {
+    this.frame=frame; this.api=api; this.controlApi=controlApi;this.onAccountStopped=onAccountStopped;this.manifest=manifest??{}; this.timeout=timeout; this.onUserCall=onUserCall; this.onUserConfig=onUserConfig; this.onNotify=onNotify; this.onReady=onReady; this.onTheme=onTheme; this.onOpenExternal=onOpenExternal;this.onPublishQuote=onPublishQuote;this.quoteController=null;
     this.onPublishFeedback=onPublishFeedback;this.feedbackController=null;
     this.onManageConsoleToken=onManageConsoleToken;this.onUpdateAction=onUpdateAction;
     this.onPublishMarket=onPublishMarket;this.marketController=null;this.onCaptchaDiagnostics=onCaptchaDiagnostics;
     this.onAuthenticateMarket=onAuthenticateMarket;this.authenticationController=null;
     this.onDestructiveProgress=onDestructiveProgress;this.destructiveProgressActive=false;this.leaving=false;
-    this.nonce=crypto.randomUUID().replaceAll('-',''); this.controllers=new Set(); this.closed=false; this.ready=false; this.flushPromise=null; this.flushResolve=null;this.flushReject=null;this.flushTimer=null;this.flushId=null;this.viewState=viewState;
+    this.protocolLoginSession=null;this.protocolLoginReleased=new Set();
+    this.nonce=crypto.randomUUID().replaceAll('-',''); this.controllers=new Set(); this.closed=false; this.ready=false;this.flushed=false; this.flushPromise=null; this.flushResolve=null;this.flushReject=null;this.flushTimer=null;this.flushId=null;this.viewState=viewState;
+    this.contentState=null;this.contentReadyPromise=new Promise(resolve=>{this.resolveContentReady=resolve;});
     this.settingsSave=createSettingsSaveLifecycle({api:this.api,manifest:this.manifest,notify:this.onNotify});
     this.listener=event=>this.handle(event); window.addEventListener('message',this.listener);
     frame.addEventListener('load',()=>this.send({jsonrpc:'2.0',method:'panel.init',params:{nonce:this.nonce,panel:this.manifest.id,...(this.settingsSave?{settingsSave:true}:{}),...(this.viewState?{viewState:this.viewState.read()}:{})}}),{once:true});
@@ -34,7 +42,12 @@ export class RpcBridge {
   }
   async handle(event) {
     const message=event.data; if(!this.valid(event,message))return;
-    if(message.method==='panel.ready') { this.ready=true; this.onReady?.(); return; }
+    if(message.method==='panel.ready') { this.ready=true; this.onReady?.();if(this.manifest.kind!=='bundled')this.finishContentReady('unsupported'); return; }
+    if(message.method==='panel.contentReady'){
+      if(this.manifest.kind!=='bundled'){if(Object.hasOwn(message,'id'))this.fail(message.id,RPC.FORBIDDEN,'此通知仅供内置面板使用');return;}
+      if(!this.ready||message.params!==undefined||Object.hasOwn(message,'id'))return;
+      this.finishContentReady('ready');return;
+    }
     if(['settings.saveState','settings.save'].includes(message.method)){
       if(!this.settingsSave)return this.fail(message.id,RPC.FORBIDDEN,'当前面板未获默认设置保存合同');
       try{const result=message.method==='settings.saveState'?this.settingsSave.stage(message.params):await this.settingsSave.save(message.params);this.reply(message.id,result);}
@@ -122,6 +135,17 @@ export class RpcBridge {
       if(!targets.has(target))return this.fail(message.id,RPC.INVALID,'不支持的公共网页');
       try {
         if(typeof this.onOpenExternal!=='function')throw new Error('当前环境未提供打开网页能力');
+        if(this.manifest.id==='settings'){
+          const native=target==='protocol-login-native';
+          if(!this.allowed('GET',native?'/api/local-protocols/login':'/api/local-protocols'))return this.fail(message.id,RPC.FORBIDDEN,'此设置面板不能管理协议端');
+          const params=message.params;
+          if(!params||typeof params!=='object'||Array.isArray(params)||Object.keys(params).some(key=>!['target','id'].includes(key))||['local-protocol-login','protocol-login-native'].includes(target)&&(typeof params.id!=='string'||!params.id||params.id.length>256))return this.fail(message.id,RPC.INVALID,'协议端页面参数无效');
+          const current=native?await this.api.request('GET','/api/local-protocols/login',undefined,{sessionId:params.id,nativeOnly:1}):target==='local-protocol-login'?await this.api.request('GET','/api/local-protocols'):null;
+          if(this.closed||this.leaving)return this.fail(message.id,RPC.INTERNAL,'面板已离开');
+          const url=native?current?.sessionId===params.id?localProtocolLoginUrl(current.nativeUrl):null:localProtocolPageUrl(target,current,params.id);
+          if(!url)throw new Error('当前实例没有可打开的本机登录页');
+          return this.reply(message.id,await this.onOpenExternal(target,{protocolUrl:url}));
+        }
         return this.reply(message.id,await this.onOpenExternal(target));
       }catch(error){return this.fail(message.id,RPC.INTERNAL,error.message);}
     }
@@ -149,14 +173,30 @@ export class RpcBridge {
       if(body&&typeof body==='object'&&(Object.hasOwn(body,'__replace__')||Object.hasOwn(body,'server')&&(!body.server||typeof body.server!=='object'||Array.isArray(body.server)||Object.hasOwn(body.server,'token')||Object.hasOwn(body.server,'__replace__'))))return this.fail(message.id,RPC.FORBIDDEN,'控制台令牌只能在宿主窗口管理');
     }
     const controller=new AbortController(); this.controllers.add(controller);
+    const protocolLogin=this.manifest.kind==='bundled'&&this.manifest.id==='settings'&&(method==='GET'&&path==='/api/local-protocols/login'||method==='POST'&&PROTOCOL_LOGIN_POSTS.has(path));
+    const accountControl=this.manifest.kind==='bundled'&&this.manifest.id==='settings'&&(method==='GET'&&path==='/api/accounts'||method==='POST'&&['/api/accounts/start','/api/accounts/stop','/api/accounts/remove'].includes(path));
+    const removalByQq=path==='/api/accounts/remove'&&message.params?.body?.id===undefined&&/^\d{5,10}$/.test(message.params?.body?.accountId||'');
+    if(accountControl&&method==='POST'&&!normalizeAccountId(message.params?.body?.id)&&!removalByQq){this.controllers.delete(controller);return this.fail(message.id,RPC.INVALID,'账号标识无效');}
     const timeout=hostApiRequestTimeout(method,path,this.timeout);
     const timer=setTimeout(()=>controller.abort(new DOMException('请求超时','TimeoutError')),timeout);
     try {
-      const result=await this.api.request(method,path,message.params?.body,message.params?.query,{signal:controller.signal,timeout});
+      const result=await (accountControl?this.controlApi:this.api).request(method,path,message.params?.body,message.params?.query,{signal:controller.signal,timeout});
+      if(protocolLogin){
+        if(path==='/api/local-protocols/login/close'){
+          if(message.params?.body?.sessionId===this.protocolLoginSession)this.protocolLoginSession=null;
+        }else if(validProtocolSession(result?.sessionId)){
+          if(this.closed||this.leaving)this.releaseProtocolLogin(result.sessionId);
+          else this.protocolLoginSession=result.sessionId;
+        }
+        // Dispose can race a successful response after headers have arrived.
+        // Close its native session before honoring the ordinary RPC abort.
+        if(this.closed||this.leaving)return;
+      }
       // A JSON decoder may normalize its body-read error. The host cancellation
       // remains authoritative even when HTTP 200 headers arrived before abort.
       if(controller.signal.aborted)throw controller.signal.reason;
       this.reply(message.id,result);
+      if(accountControl&&['/api/accounts/stop','/api/accounts/remove'].includes(path)&&message.params.body.id)this.onAccountStopped?.(message.params.body.id);
     }
     catch(error) { this.fail(message.id,error.name==='TimeoutError'||error.name==='AbortError'?RPC.INTERNAL:RPC.FORBIDDEN,error.name==='AbortError'?'面板已卸载':error.message,error.status); }
     finally { clearTimeout(timer);this.controllers.delete(controller); }
@@ -187,9 +227,18 @@ export class RpcBridge {
     this.send({jsonrpc:'2.0',method:'shell.event',params:{name,payload}});
   }
   send(message) { if(!this.closed)this.frame.contentWindow?.postMessage({...message,meta:{nonce:this.nonce,panel:this.manifest.id}},'*'); }
+  finishContentReady(status){
+    if(this.contentState)return;
+    this.contentState={status};this.resolveContentReady?.(this.contentState);this.resolveContentReady=null;
+  }
+  whenContentReady({timeout=4000}={}){
+    if(this.contentState)return Promise.resolve(this.contentState);
+    const duration=Number.isFinite(timeout)?Math.max(0,Math.min(15000,timeout)):4000;
+    return new Promise(resolve=>{const timer=setTimeout(()=>resolve({status:'timeout'}),duration);this.contentReadyPromise.then(value=>{clearTimeout(timer);resolve(value);});});
+  }
   flush() {
     this.leaving=true;this.clearDestructiveProgress();
-    if(this.closed||!this.ready)return Promise.resolve();
+    if(this.closed||!this.ready||this.flushed)return Promise.resolve();
     if(this.flushPromise)return this.flushPromise;
     this.flushId=crypto.randomUUID();this.viewState?.leave(this.flushId);
     this.flushPromise=new Promise((resolve,reject)=>{this.flushResolve=resolve;this.flushReject=reject;this.flushTimer=setTimeout(()=>this.finishFlush(null,true),this.timeout);});
@@ -201,9 +250,14 @@ export class RpcBridge {
     const failed=expired||params?.ok===false;
     if(!failed)this.viewState?.finish(this.flushId,params?.viewState);
     clearTimeout(this.flushTimer);this.flushTimer=null;const resolve=this.flushResolve,reject=this.flushReject;this.flushResolve=null;this.flushReject=null;this.flushPromise=null;
-    if(failed){this.leaving=false;this.viewState?.cancel?.(this.flushId);this.send({jsonrpc:'2.0',method:'panel.leaveCancelled',params:{flushId:this.flushId}});reject(new Error(expired?'等待面板保存超时；当前编辑仍保留，请稍后重试':String(params.error||'面板保存失败；当前编辑仍保留')));}else resolve();
+    if(failed){this.leaving=false;this.viewState?.cancel?.(this.flushId);this.send({jsonrpc:'2.0',method:'panel.leaveCancelled',params:{flushId:this.flushId}});reject(new Error(expired?'等待面板保存超时；当前编辑仍保留，请稍后重试':String(params.error||'面板保存失败；当前编辑仍保留')));}else{this.flushed=true;resolve();}
   }
   clearDestructiveProgress(){if(this.destructiveProgressActive){this.destructiveProgressActive=false;this.onDestructiveProgress?.(0,'cancelled');}}
+  releaseProtocolLogin(sessionId){
+    if(!validProtocolSession(sessionId)||this.protocolLoginReleased.has(sessionId))return;
+    this.protocolLoginReleased.add(sessionId);
+    try{void Promise.resolve(this.api.request('POST','/api/local-protocols/login/close',{sessionId})).catch(()=>{});}catch{}
+  }
   beforeUnload(event){return this.settingsSave?.beforeUnload(event)??false;}
-  close() { if(this.closed)return;this.leaving=true;this.clearDestructiveProgress();this.finishFlush(null,true);this.viewState?.expire();this.settingsSave?.close();this.closed=true;window.removeEventListener('message',this.listener);for(const controller of this.controllers)controller.abort();this.controllers.clear(); }
+  close() { if(this.closed)return;this.leaving=true;this.finishContentReady('closed');this.clearDestructiveProgress();this.finishFlush(null,true);this.viewState?.expire();this.settingsSave?.close();this.closed=true;this.releaseProtocolLogin(this.protocolLoginSession);this.protocolLoginSession=null;window.removeEventListener('message',this.listener);for(const controller of this.controllers)controller.abort();this.controllers.clear(); }
 }

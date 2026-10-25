@@ -1,6 +1,7 @@
 // 社区面板：发布账号、扩展发布与意见收集。
 // 全部动作走面板 RPC（后端按 manifest 白名单放行），UI 只负责收集参数与呈现结果。
-import { request, openCommunityPage, publishMarket, cancelMarketPublish, authenticateMarket, cancelMarketAuthentication, openCaptchaDiagnostics, onLeave } from '/panels/panel-client.js';
+import {createLiveRefresh} from '../live-refresh.js';
+import { onShellEvent, request, openCommunityPage, publishMarket, cancelMarketPublish, authenticateMarket, cancelMarketAuthentication, openCaptchaDiagnostics, onLeave, contentReady } from '/panels/panel-client.js';
 import { $, clear, text, error, capability, confirmAction, button, bindDestructiveAction } from '../ui.js';
 import { createFeedbackForm } from './feedback-form.js';
 import {bindAuthoringGuide} from '../extension-authoring.js';
@@ -8,6 +9,7 @@ bindAuthoringGuide({parent:document.querySelector('main > header .actions')});
 
 const meta = $('#meta');
 let accounts = [];
+let accountVersion=0,disposed=false,accountSignature='';
 const linkStatus = $('#community-link-status');
 for (const [id, target, label] of [
   ['#open-persona-plaza', 'persona-plaza-btn', '人设广场'],
@@ -69,13 +71,17 @@ function renderAccounts() {
 }
 
 async function loadAccounts() {
+  const version=++accountVersion;
   const data = await capability(() => request('GET', '/api/market/accounts'), meta);
-  if (!data) return;
+  if(disposed||version!==accountVersion)return null;
+  if(!data){void contentReady();return null;}
   accounts = data.accounts ?? [];
   if (!selected || !accounts.some((a) => a.username === selected)) {
     logoutControl.reset(); selected = accounts[0]?.username ?? '';
   }
-  renderAccounts();
+  const signature=JSON.stringify([accounts,selected,loggingOut]);if(signature!==accountSignature){accountSignature=signature;renderAccounts();}
+  text(meta,`已登录 ${accounts.length} 个账号`);
+  void contentReady();
   return accounts;
 }
 
@@ -130,11 +136,13 @@ $('#publish').addEventListener('click', async () => {
   finally{publishing=false;$('#publish').disabled=false;$('#publish-cancel').hidden=true;}
 });
 
-onLeave(() => logoutControl.dispose());
+const live=createLiveRefresh(()=>loadAccounts());
+onShellEvent((name,payload)=>{if(name==='hello'||name==='status'&&payload?.communityAccountsUpdated)live.request();});
+onLeave(() => {disposed=true;++accountVersion;live.dispose();logoutControl.dispose();});
 $('#refresh').addEventListener('click', loadAccounts);
 
 /* ---------- 启动 ---------- */
 (async () => {
   const list = await loadAccounts();
   text(meta, list === null ? '环境未提供社区能力' : `社区就绪 · 已登录 ${accounts.length} 个账号`);
-})().catch((e) => error(meta, e.message || '加载失败'));
+})().catch((e) => {if(!disposed){error(meta, e.message || '加载失败');void contentReady();}});

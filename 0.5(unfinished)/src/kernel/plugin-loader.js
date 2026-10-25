@@ -1,7 +1,7 @@
 // 插件装载器：两型（plugin 确定性 / skill LLM 型）清单规范化、装载、启停、SDK ctx 缝。
 // 出处：SPEC §7（扩展系统全节）；DSH §4（插件模型与 SDK）。
 // 关键行为（全部 SPEC §7.1 取证）：
-// - 目录锚点 = APP_ROOT，绝不用 process.cwd()
+// - 目录锚点由宿主指定（默认 APP_ROOT），绝不用 process.cwd()
 // - 串行加载；单个失败带 loadError 注册（UI 可见），不拖垮启动
 // - stale-but-working：新版本 setup 抛错 → 沿用旧实例（优于 down）
 // - 两段闸：setup 前 deactivate 旧实例（不清注册）→ setup 成功后清旧注册 + register 新
@@ -13,6 +13,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { safeFetch } from './safe-fetch.js';
+import {normalizeUpdateSource} from './extension-update-source.js';
 import { sanitizeSdkValue, sanitizeProviderArguments, CORE_FUNCTIONAL_CAPABILITIES } from './sdk-services.js';
 
 // 覆盖清单、源码和 UI 资产；不是代码沙箱，外部依赖仍必须可信。
@@ -50,18 +51,39 @@ const importedGraphs = new Map();
 const graphImports = new Map();
 const MAX_GRAPH_IMPORTS = 32;
 
+// Extension/code/cache anchors are host inputs. Reject ancestor junctions as
+// well as links at the leaf; a worker must not inherit another account's tree.
+export function assertExtensionDirectory(directory, { create = false } = {}) {
+  const absolute = path.resolve(directory), parsed = path.parse(absolute);
+  let current = parsed.root;
+  for (const part of absolute.slice(parsed.root.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    if (create && !fs.existsSync(current)) fs.mkdirSync(current);
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('扩展目录及父路径不接受符号链接或非普通目录');
+  }
+  return fs.realpathSync(absolute);
+}
+
+function directExtensionDirectory(root, directory) {
+  const anchor = assertExtensionDirectory(root), absolute = path.resolve(directory);
+  if (path.dirname(absolute) !== path.resolve(root)) throw new Error('扩展必须位于所属根的直接子目录');
+  const original = assertExtensionDirectory(absolute);
+  if (path.dirname(original) !== anchor) throw new Error('扩展目录真实路径越界');
+  return original;
+}
+
 // 新 URL 来自不可变目录，而不是改写源码或依赖 Node22 loader hook。
 // 插件外依赖映射回原路径（Node 默认 realpath），共享内核/包身份且不热更新。
 // import.meta.url 指向副本；插件应经 ctx.storage 写数据。--preserve-symlinks 不支持。
-function snapshotGraph(appRoot, rootKind, dir, entryPath, fingerprint, generation) {
-  const root = fs.realpathSync(appRoot), original = fs.realpathSync(dir);
-  const relative = path.relative(path.join(root, rootKind), original);
+function snapshotGraph(appRoot, extensionRoot, runtimeCacheRoot, roots, rootKind, dir, entryPath, fingerprint, generation) {
+  const root = assertExtensionDirectory(appRoot), original = directExtensionDirectory(roots[rootKind], dir);
+  const relative = path.relative(assertExtensionDirectory(roots[rootKind]), original);
   if (relative.startsWith('..') || path.isAbsolute(relative) || !relative || relative.includes(path.sep)) {
     throw new Error('热重载只支持扩展根下的直接插件目录');
   }
   if (process.execArgv.some((arg) => arg.startsWith('--preserve-symlinks'))) throw new Error('热重载不支持 --preserve-symlinks，请重启并移除该参数');
-  const cache = path.join(root, 'data-plugin-runtime');
-  fs.mkdirSync(cache, { recursive: true });
+  const cache = assertExtensionDirectory(runtimeCacheRoot, { create: true });
   const runtime = fs.mkdtempSync(path.join(cache, `${generation}-`));
   const mirror = path.join(runtime, 'app');
   const copy = path.join(mirror, rootKind, relative);
@@ -72,7 +94,10 @@ function snapshotGraph(appRoot, rootKind, dir, entryPath, fingerprint, generatio
     // 摘要绑定原目录身份；复制期间改动不能被授权成一致的模块图。
     if (pluginFingerprint(copy, { identityRoot: original }) !== fingerprint || pluginFingerprint(original) !== fingerprint) throw new Error('插件在创建热重载副本时发生变化，请重试');
     for (const name of fs.readdirSync(root)) {
-      if (name === rootKind || name === 'data-plugin-runtime') continue;
+      if (Object.hasOwn(roots, name) || name === 'data-plugin-runtime' || path.resolve(root, name) === path.resolve(runtimeCacheRoot)) continue;
+      // Separated workers obtain writable state via their own SDK/storage.
+      // Do not mirror the primary app's data roots into their module graph.
+      if (path.resolve(extensionRoot) !== path.resolve(appRoot) && /^data(?:-|$)/.test(name)) continue;
       const source = path.join(root, name), target = path.join(mirror, name);
       if (fs.statSync(source).isDirectory()) link(source, target);
       else if (name === 'package.json') fs.copyFileSync(source, target);
@@ -86,8 +111,17 @@ function snapshotGraph(appRoot, rootKind, dir, entryPath, fingerprint, generatio
         }
       }
     }
-    for (const name of fs.readdirSync(path.join(root, rootKind))) {
-      if (name !== relative) link(path.join(root, rootKind, name), path.join(mirror, rootKind, name));
+    for (const [kind, domainRoot] of Object.entries(roots)) {
+      if (!fs.existsSync(domainRoot)) continue;
+      assertExtensionDirectory(domainRoot);
+      if (kind !== rootKind) { link(domainRoot, path.join(mirror, kind)); continue; }
+      for (const name of fs.readdirSync(domainRoot)) {
+        if (name !== relative) {
+          const source = path.join(domainRoot, name);
+          if (fs.lstatSync(source).isSymbolicLink()) throw new Error('扩展根不接受符号链接目录');
+          link(source, path.join(mirror, kind, name));
+        }
+      }
     }
     // 无 package.json 的手工插件仍按 SDK 的 ESM 入口约定加载（Node20）。
     if (!fs.existsSync(path.join(mirror, 'package.json'))) fs.writeFileSync(path.join(mirror, 'package.json'), '{"type":"module"}');
@@ -102,6 +136,8 @@ function snapshotGraph(appRoot, rootKind, dir, entryPath, fingerprint, generatio
 export function normalizeManifest(raw, fallbackId) {
   const problems = [];
   const m = raw && typeof raw === 'object' ? raw : {};
+  let update=null,updateError=null;
+  try{update=normalizeUpdateSource(m.update);}catch(error){updateError=error.message;problems.push({level:'warn',msg:`${updateError}；保留手动重新加载`});}
   const id = typeof m.id === 'string' && m.id ? m.id : fallbackId;
   if (!SKILL_ID_RE.test(id)) problems.push({ level: 'error', msg: `id 非法：${id}` });
   let apiVersion = typeof m.apiVersion === 'number' ? m.apiVersion : 1;
@@ -127,7 +163,7 @@ export function normalizeManifest(raw, fallbackId) {
   }
   return {
     manifest: {
-      id, name: typeof m.name === 'string' && m.name ? m.name : id,
+      id, name: typeof m.name === 'string' && m.name ? m.name : id, update, updateError,
       version: typeof m.version === 'string' ? m.version : '0.0.0',
       apiVersion, kind: m.kind === 'plugin' ? 'plugin' : 'skill',
       enabledByDefault: m.enabledByDefault !== false,
@@ -181,6 +217,8 @@ export function resolveEntrySafe(dir, entry) {
 
 export function createPluginLoader({
   log = console, bus = null, appRoot,
+  extensionRoot = appRoot,
+  runtimeCacheRoot = path.join(extensionRoot, 'data-plugin-runtime'),
   registry,        // 工具注册表
   capabilityRegistry,
   permissions,
@@ -209,9 +247,11 @@ export function createPluginLoader({
   const loadingEntries = new Set();
   const roots = {
     bundled: path.join(appRoot, 'bundled'),
-    plugins: path.join(appRoot, 'plugins'), // 用户确定性型（出厂空）
-    skills: path.join(appRoot, 'skills'),   // 用户 LLM 型（出厂空）
+    plugins: path.join(extensionRoot, 'plugins'), // 用户确定性型（出厂空）
+    skills: path.join(extensionRoot, 'skills'),   // 用户 LLM 型（出厂空）
   };
+  assertExtensionDirectory(extensionRoot, { create: true });
+  const graphScope = JSON.stringify([path.resolve(extensionRoot), path.resolve(runtimeCacheRoot)]);
 
   const isLoaded = (id) => entries.has(id);
   // SPEC §5.1：skills[<id>].enabled 是开关唯一来源（只存用户改过的值）；
@@ -536,9 +576,20 @@ export function createPluginLoader({
     loadQueue = run.catch(() => {});
     return run;
   }
+  // Stage downloads outside the queue. Only the final swap and reload hold this
+  // queue, so filesystem watchers cannot load a half-replaced directory.
+  function withDirectoryUpdate(id,task){
+    const run=loadQueue.then(()=>{
+      if(stopped)throw Error('扩展加载器已停止');
+      const entry=entries.get(id);if(!entry)throw Error('扩展已不存在');
+      return task({entry,reload:()=>loadDirectory(entry.rootKind,entry.dir,{hot:true,requestedEpochs:new Map(ownerEpochs)})});
+    });loadQueue=run.catch(()=>{});return run;
+  }
 
   async function loadDirectory(rootKind, dir, { hot = false, skipUnchanged = false, watchToken = null, requestedEpochs } = {}) {
     if (stopped || (watchToken !== null && (!watchStarted || watchEpoch !== watchToken))) return;
+    if (!Object.hasOwn(roots, rootKind)) throw new Error('未知的扩展根');
+    directExtensionDirectory(roots[rootKind], dir);
     // Startup composition source is shipped beside plugins but is not a plugin
     // and must never enter the plugin installation/hot-reload lifecycle.
     if (rootKind === 'bundled' && path.resolve(dir) === path.resolve(roots.bundled, 'runtime-defaults')) return;
@@ -645,7 +696,7 @@ export function createPluginLoader({
 
     try {
       entry.fingerprint = pluginFingerprint(dir);
-      const graphKey = fs.realpathSync(dir);
+      const graphKey = JSON.stringify([graphScope, fs.realpathSync(dir)]);
       const dependencyFingerprint = pluginFingerprint(dir, { excludeEntry: entryCheck.path, dependenciesOnly: true });
       // 非 hot 保留兼容的保守拒绝，不把已变依赖图重新授权成旧缓存。
       if (importedGraphs.has(graphKey) && importedGraphs.get(graphKey) !== dependencyFingerprint && !hot) {
@@ -658,7 +709,7 @@ export function createPluginLoader({
         isCurrent: () => pluginFingerprint(entry.dir) === entry.fingerprint,
       });
       if ((graphImports.get(graphKey) ?? 0) >= MAX_GRAPH_IMPORTS) throw new Error(`插件已达到 ${MAX_GRAPH_IMPORTS} 次模块图装载上限，请重启进程释放 ESM 缓存`);
-      const snapshot = snapshotGraph(appRoot, rootKind, dir, entryCheck.path, entry.fingerprint, entry.generation);
+      const snapshot = snapshotGraph(appRoot, extensionRoot, runtimeCacheRoot, roots, rootKind, dir, entryCheck.path, entry.fingerprint, entry.generation);
       entry.runtime = snapshot.runtime;
       // 即使 import/setup 失败也消耗预算：ESM 已缓存模块无法显式释放。
       importedGraphs.set(graphKey, dependencyFingerprint);
@@ -780,10 +831,11 @@ export function createPluginLoader({
     const alive = new Set();
     for (const [rootKind, root] of Object.entries(roots)) {
       if (!fs.existsSync(root)) continue;
+      try { assertExtensionDirectory(root); } catch { continue; }
       for (const name of fs.readdirSync(root)) {
         if (rootKind === 'bundled' && name === 'runtime-defaults') continue;
         const dir = path.join(root, name);
-        if (!fs.statSync(dir).isDirectory()) continue;
+        try { directExtensionDirectory(root, dir); } catch { continue; }
         const { raw } = readManifest(dir);
         alive.add(raw?.id ?? name);
         // 清单损坏不是目录删除，旧实例仍需保留以便回滚。
@@ -819,11 +871,12 @@ export function createPluginLoader({
     log.info(`[loader] 开始装载（${reason}）：bundled → plugins → skills（串行）`);
     for (const [rootKind, root] of Object.entries(roots)) {
       if (!fs.existsSync(root)) continue;
+      try { assertExtensionDirectory(root); } catch (err) { log.error?.(`[loader] 扩展根不安全：${err.message}`); continue; }
       for (const name of fs.readdirSync(root).sort()) {
         if (rootKind === 'bundled' && name === 'runtime-defaults') continue;
         const dir = path.join(root, name);
         try {
-          if (!fs.statSync(dir).isDirectory()) continue;
+          if (!fs.lstatSync(dir).isDirectory() || fs.lstatSync(dir).isSymbolicLink()) continue;
           if (stopped || (watchToken !== null && (!watchStarted || watchToken !== watchEpoch))) return listEntries();
           await loadDir(rootKind, dir, { hot: hot || reason === 'fs-watch', skipUnchanged, watchToken }); // 逐目录串行
         } catch (err) {
@@ -837,7 +890,7 @@ export function createPluginLoader({
 
   function listEntries() {
     return [...entries.values()].map((e) => ({
-      id: e.manifest.id, name: e.manifest.name, version: e.manifest.version,
+      id: e.manifest.id, name: e.manifest.name, version: e.manifest.version, update: e.manifest.update, updateError: e.manifest.updateError,
       kind: e.manifest.kind, category: e.manifest.category, description: e.manifest.description,
       root: e.rootKind, dir: e.dir, status: e.status, loadError: e.loadError,
       lastError: e.lastError ?? null, lastErrorAt: e.lastErrorAt ?? null,
@@ -1052,7 +1105,7 @@ export function createPluginLoader({
     try {
       const watcher = watch(root, { recursive }, (_event, filename) => {
         if (!watchStarted || stopped || epoch !== watchEpoch || watchHandles.get(key) !== watcher) return;
-        if (key === 'parent' && filename != null && !Object.hasOwn(roots, String(filename).split(/[\\/]/)[0])) return;
+        if (key.startsWith('parent') && filename != null && !Object.hasOwn(roots, String(filename).split(/[\\/]/)[0])) return;
         queueWatchScan(key);
       });
       watchHandles.set(key, watcher); watchIdentities.set(key, identity);
@@ -1078,6 +1131,7 @@ export function createPluginLoader({
     // Root watches attach to directory identities, not names. Keep one
     // non-recursive parent watch so rename/replacement can rebind those roots.
     bindWatcher('parent', appRoot, false);
+    if (path.resolve(extensionRoot) !== path.resolve(appRoot)) bindWatcher('parent-extensions', extensionRoot, false);
     for (const [kind, root] of Object.entries(roots)) bindWatcher(kind, root, true);
   }
 
@@ -1125,7 +1179,7 @@ export function createPluginLoader({
   }
 
   return {
-    loadAll, loadDir, unload, pruneMissing, setEnabled, listEntries, startWatchers, stopWatchers,
+    loadAll, loadDir, withDirectoryUpdate, unload, pruneMissing, setEnabled, listEntries, startWatchers, stopWatchers,
     // 仅宿主适配器使用，永不把 ctx/dir 交给 iframe。
     hostEntry: (id) => entries.get(id) ?? null,
     contentCurrent(id, fingerprint = null) {

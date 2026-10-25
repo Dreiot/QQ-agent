@@ -109,6 +109,17 @@ files.push('288-send-settings-help-test.mjs');
 files.push('289-proactive-seconds-help-test.mjs');
 files.push('290-sticker-conditional-settings-test.mjs');
 files.push('293-onebot-manual-boundary-test.mjs', '294-external-onebot-ui-test.mjs', '295-application-log-ui-test.mjs');
+files.push('293-settings-intuitive-autosave-test.mjs', '294-settings-layout-refinement-test.mjs', '296-theme-personalization-test.mjs', '297-interface-motion-preferences-test.mjs', '298-appearance-editor-integration-test.mjs', '299-upstream-ui-migration-test.mjs');
+files.push('300-press-feedback-test.mjs');
+files.push('301-ripple-personalization-test.mjs','302-realtime-stream-test.mjs','303-live-pages-test.mjs','304-modal-visual-matrix-test.mjs');
+files.push('306-session-frame-clock-test.mjs','307-reasoning-roundtrip-test.mjs');
+files.push('brand-emblem-personalization-test.mjs','protocol-adapters-test.mjs','local-protocol-manager-test.mjs','local-protocol-process-tree-test.mjs','local-protocols-ui-test.mjs','local-protocol-pages-test.mjs','local-protocol-sse-test.mjs');
+files.push('native-login-client-test.mjs','protocol-login-test.mjs','protocol-connection-test.mjs','protocol-login-ui-test.mjs','protocol-login-roundtrip-test.mjs');
+files.push('accounts-manager-test.mjs','account-gateway-test.mjs','account-extension-isolation-test.mjs','account-scope-test.mjs','account-switcher-ui-test.mjs','multi-account-roundtrip-test.mjs');
+files.push('account-scope-browser-test.mjs');
+files.push('account-navigation-browser-test.mjs','panel-content-ready-test.mjs','account-transition-browser-test.mjs');
+files.push('account-metadata-stream-test.mjs','account-reset-quiescence-test.mjs','account-control-rpc-test.mjs');
+files.push('extension-online-update-test.mjs','extension-online-update-ui-test.mjs');
 let pass=0;let fail=0;
 files.push('291-composition-lifecycle-regression-test.mjs', '292-theme-description-test.mjs');
 for(const file of files){console.log(`\n=== ${file} ===`);const result=spawnSync(process.execPath,[path.join(here,file)],{stdio:'inherit',timeout:240000});if(result.status===0)pass++;else {fail++;console.error(`FAILED ${file}: status=${result.status} signal=${result.signal||'none'} ${result.error?.message||''}`);}}

@@ -1,0 +1,14 @@
+/* A pointer-transparent top layer lets the ring pass a card's clipping edges,
+   including controls inside a modal. Only this temporary layer is animated. */
+.press-feedback-layer {
+  position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;
+  max-width:none!important;max-height:none!important;margin:0!important;padding:0!important;
+  border:0!important;outline:0!important;background:transparent!important;box-shadow:none!important;
+  pointer-events:none!important;overflow:clip!important;contain:strict;z-index:2147483647;
+}
+.press-feedback-layer::backdrop{background:transparent;pointer-events:none;}
+.press-feedback-ring {
+  position:absolute;display:block;box-sizing:border-box;border:1.5px solid currentColor;
+  background:transparent;pointer-events:none!important;transform:none!important;
+}
+@media(prefers-reduced-motion:reduce){.press-feedback-layer{display:none!important;}}

@@ -9,7 +9,7 @@ import {createApplication} from '../src/kernel/composition.js';
 import {createConfig, buildDefaultConfig} from '../src/kernel/config.js';
 import {launchVisibilityBrowser} from './real-visibility-browser.mjs';
 
-export async function modelUiFixture({models = [], config = {}, components = {}, uiAsset = null, uiAssetPath = 'panels/settings/model-picker.js', uiAssetEnabled = true, marketClientFactory = null, nativeVisibility = false, updateCheck = async()=>({ok:true,current:'0.5.0',latest:'0.5.0',hasUpdate:false})} = {}) {
+export async function modelUiFixture({models = [], config = {}, components = {}, transport = null, uiAsset = null, uiAssetPath = 'panels/settings/model-picker.js', uiAssetEnabled = true, marketClientFactory = null, nativeVisibility = false, updateCheck = async()=>({ok:true,current:'0.5.0',latest:'0.5.0',hasUpdate:false})} = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qqa-model-parity-')), appRoot = path.join(dir, 'app');
   fs.mkdirSync(appRoot); fs.cpSync(path.resolve(import.meta.dirname, '../ui'), path.join(appRoot, 'ui'), {recursive:true});
   for (const folder of ['bundled','plugins','skills']) fs.mkdirSync(path.join(appRoot, folder));
@@ -47,7 +47,7 @@ export async function modelUiFixture({models = [], config = {}, components = {},
   }
   try {
     kernel = await createApplication({appRoot,headless:true,components,env:{QQ_AGENT_DATA_DIR:dir,QQ_AGENT_MIGRATE_FROM:path.join(dir,'absent')},
-      transport:{id:'inert-model-fixture',start(){},stop(){},status:()=>({connected:false}),actions:{}},
+      transport:transport??{id:'inert-model-fixture',start(){},stop(){},status:()=>({connected:false}),actions:{}},
       fetchImpl:async()=>{++outbound;throw new Error('External traffic disabled');},
       priceUpdates:{refresh:async()=>({ok:true}),updateCheck},communityMarket:marketClientFactory?{
         ...marketClientFactory({appRoot,dataDir:dir}),syncGlobalBlocklist:async()=>({ok:true,ids:[]}),getBlocklist:()=>({ok:true,ids:[]}),
@@ -74,7 +74,7 @@ export async function modelUiFixture({models = [], config = {}, components = {},
     const frame=page.frameLocator('#panel-host iframe');
     async function openSettings() {
       await page.goto(base); await page.locator('#nav button[data-panel=settings]').click();
-      await frame.locator('#status').filter({hasText:'配置已读取'}).waitFor(); await settingsSection(frame,'models');
+      await frame.locator('#settings-sidebar a[data-target=models]').waitFor({state:'visible'}); await settingsSection(frame,'models');
     }
     await openSettings();
     return {dir,appRoot,kernel,page,frame,base,modelBase,modelRequests,errors,writes,openSettings,close,

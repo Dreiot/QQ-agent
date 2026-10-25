@@ -130,7 +130,7 @@ function safeJoinStatic(root, urlPathname) {
   return joined;
 }
 
-export function createHttpServer({ config, log = console, bus = null, staticDir, extraStaticRoots = [], panelAssetResolver = null, uiAssetResolver = null, apiGuard = null }) {
+export function createHttpServer({ config, log = console, bus = null, staticDir, extraStaticRoots = [], panelAssetResolver = null, uiAssetResolver = null, apiGuard = null, accountGateway = null }) {
   const { route, createRouteScope, matchRoute } = createScopedRouteRegistry();
   let server = null;
   let actualPort = null;
@@ -182,8 +182,12 @@ export function createHttpServer({ config, log = console, bus = null, staticDir,
   }
 
   function broadcast(event, payload) {
+    if(!sseClients.size)return;
     const frame = `event: ${event}\ndata: ${JSON.stringify(payload ?? {})}\n\n`;
     for (const res of [...sseClients]) {
+      // A suspended reader must reconnect and recover a snapshot rather than
+      // retaining an unbounded stream of tokens/logs in the server heap.
+      if(res.writableLength>2*1024*1024){sseClients.delete(res);res.destroy();continue;}
       try { res.write(frame); } catch { sseClients.delete(res); }
     }
   }
@@ -310,6 +314,17 @@ export function createHttpServer({ config, log = console, bus = null, staticDir,
     const urlObj = new URL(req.url, `http://${req.headers.host ?? '127.0.0.1'}`);
     const pathname = urlObj.pathname;
     try {
+      if(pathname.startsWith('/accounts/')){
+        const match=/^\/accounts\/[^/]+(\/.*)$/.exec(pathname),effectivePath=match?.[1]||'';
+        if(effectivePath.startsWith('/api/')){
+          const token=config.get().server?.token??'',provided=req.headers['x-console-token']??urlObj.searchParams.get('token');
+          if(token&&provided!==token)return sendJson(res,401,{error:'未授权',code:'CONSOLE_AUTH_REQUIRED'});
+          if(!originAllowed(req))return sendJson(res,403,{error:'请求来源不被信任（仅接受本机控制台的同源请求）'});
+          const blocked=apiGuard?.({method:req.method,pathname:effectivePath});if(blocked)return sendJson(res,blocked.status??409,blocked.body);
+        }
+        if(!accountGateway)return sendJson(res,404,{error:'当前实例未提供账号网关'});
+        return accountGateway({req,res,pathname,urlObj});
+      }
       if (pathname === '/api/console/bootstrap') return handleConsoleBootstrap(req, res);
       if (pathname === '/api/events' && req.method === 'GET') {
         // SSE must use the exact same token and origin guards as REST APIs.

@@ -42,6 +42,7 @@ export function createSessionRegistry({ dataDir, log = console, keepSessionFiles
   fs.mkdirSync(dir, { recursive: true });
   const byId = new Map(); // id -> session（活对象）
   const persistTimers = new Map(); // 定时器属于仓库，不能进入 JSON 或 structuredClone 的会话数据。
+  const streamBatches = new Map();
   const unarchived = new Set(); // 日档失败时保留会话文件，下一次成功后解除；不写入会话正文。
   let keepOverride;
   let indexCacheTimer = null;
@@ -67,6 +68,31 @@ export function createSessionRegistry({ dataDir, log = console, keepSessionFiles
     const timer = persistTimers.get(id);
     if (timer) clearTimeout(timer);
     persistTimers.delete(id);
+  }
+
+  function schedulePersist(s){
+    if(persistTimers.has(s.id))return;
+    const timer=setTimeout(()=>{persistTimers.delete(s.id);persistNow(s);},PERSIST_THROTTLE_MS);
+    persistTimers.set(s.id,timer);timer.unref?.();
+  }
+  function flushStream(id){
+    const batch=streamBatches.get(id);if(!batch)return;
+    clearTimeout(batch.timer);streamBatches.delete(id);
+    bus?.emit('session.delta',batch.payload);
+  }
+  // Persist a recoverable snapshot, but transport only the new text. Batch tiny
+  // token frames once per 50 ms; a normal update always drains them first.
+  function stream(s,step,delta){
+    if(byId.get(s.id)!==s||s.status!=='running')return;
+    s.activeStep=step;schedulePersist(s);
+    let batch=streamBatches.get(s.id);
+    if(batch&&(batch.payload.step.streamId!==step.streamId||delta.reset||batch.payload.delta.content.length+batch.payload.delta.reasoning.length>65536)){flushStream(s.id);batch=null;}
+    const {content,reasoning,...metadata}=step;
+    if(batch){batch.payload.step=metadata;batch.payload.delta.content+=delta.content;batch.payload.delta.reasoning+=delta.reasoning;batch.payload.delta.revision=delta.revision;}
+    else{
+      const payload={id:s.id,chatKey:s.chatKey,step:metadata,delta:{...delta}};
+      const timer=setTimeout(()=>flushStream(s.id),50);timer.unref?.();streamBatches.set(s.id,{timer,payload});
+    }
   }
 
   function recordFinished(s, previousAccountedUsage) {
@@ -168,6 +194,7 @@ export function createSessionRegistry({ dataDir, log = console, keepSessionFiles
 
   /** 运行中节流写（2s）；其它状态立即写。 */
   function update(s, patch) {
+    flushStream(s.id);
     // 旧终态文件已经计过账；重试沿用同一 ID 时，仅累加新尝试的差值。
     if (!['running', 'waiting'].includes(s.status)) {
       s.accountedUsage ??= { ...s.usage, webSearchCount: Number(s.webSearchCount) || 0, counted: Boolean(s.usage?.calls || s.usage?.totalTokens) };
@@ -186,14 +213,7 @@ export function createSessionRegistry({ dataDir, log = console, keepSessionFiles
       return s;
     }
     if (s.status === 'running' || s.status === 'waiting') {
-      if (!persistTimers.has(s.id)) {
-        const timer = setTimeout(() => {
-          persistTimers.delete(s.id);
-          persistNow(s);
-        }, PERSIST_THROTTLE_MS);
-        persistTimers.set(s.id, timer);
-        timer.unref?.();
-      }
+      schedulePersist(s);
     } else {
       cancelPersist(s.id);
       bumpTodayUsage(s);
@@ -208,6 +228,7 @@ export function createSessionRegistry({ dataDir, log = console, keepSessionFiles
   function finish(id, status, extra = {}) {
     const s = byId.get(id);
     if (!s) return null;
+    flushStream(id);
     // 终态只记一次：重复 finish（例如重试后再收尾）不得二次累加遥测/今日用量。
     if (!['running', 'waiting'].includes(s.status)) return s;
     const previousAccountedUsage = { ...structuredClone(s.accountedUsage ?? {}), toolCounts: { ...(s.accountedTotals?.toolCounts ?? {}) } };
@@ -385,6 +406,7 @@ export function createSessionRegistry({ dataDir, log = console, keepSessionFiles
     const s = byId.get(id) ?? get(id);
     if (!s) return false;
     if (!allowPending && (s.status === 'running' || s.status === 'waiting')) return false;
+    flushStream(id);
     cancelPersist(id);
     byId.delete(id);
     unarchived.delete(id);
@@ -435,9 +457,10 @@ export function createSessionRegistry({ dataDir, log = console, keepSessionFiles
   }
 
   return {
-    create, update, finish, peek, get, current, running,
+    create, update, stream, finish, peek, get, current, running,
     listSummaries, reconcileInBackground, todayUsage, flushIndexCache,
     stop() {
+      for(const id of [...streamBatches.keys()])flushStream(id);
       if (reconcileTimer) { clearImmediate(reconcileTimer); reconcileTimer = null; }
       for (const id of [...persistTimers.keys()]) {
         cancelPersist(id);

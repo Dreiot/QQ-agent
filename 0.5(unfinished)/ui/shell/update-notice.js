@@ -1,3 +1,5 @@
+import {createIcon} from '../panels/icons.js';
+
 export const UPDATE_INTERVAL_MS=3600000;
 const VERSION=/^\d+(?:\.\d+){2,3}(?:[-+][A-Za-z0-9.-]+)?$/;
 export function updateDownloadUrl(value){
@@ -10,10 +12,10 @@ export function createUpdateNotice({api,doc=document,win=window,onStatus=()=>{}}
   let disposed=false,pending=null,timer=null,last=null,error='',checkedAt=0,dismissed=false,visible=false,revision=0;
   const style=doc.createElement('style');style.textContent=`.update-notice{position:fixed;right:20px;bottom:20px;z-index:95;width:min(380px,calc(100vw - 40px));padding:16px;background:var(--surface,#202427);color:var(--text,#eee);border:1px solid var(--accent,#d2e343);box-shadow:0 8px 32px #0005}.update-notice[hidden]{display:none}.update-notice header{display:flex;align-items:center;justify-content:space-between;gap:12px}.update-notice p{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto}.update-notice a{color:var(--accent,#d2e343)}.update-notice button{cursor:pointer}.update-available .nav-label::after{content:'•';color:var(--accent,#d2e343);margin-left:8px}`;
   doc.head.append(style);
-  style.textContent+='@keyframes qqa-update-enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}.update-notice{animation:qqa-update-enter 180ms cubic-bezier(.2,.7,.2,1)}@media(prefers-reduced-motion:reduce){.update-notice{animation:none}}';
+  style.textContent+='@keyframes qqa-update-enter{from{opacity:0;transform:translateY(calc(8px * var(--motion-scale,1)))}to{opacity:1;transform:translateY(0)}}.update-notice{animation:qqa-update-enter calc(180ms * var(--motion-duration-factor,1)) cubic-bezier(.2,.7,.2,1)}@media(prefers-reduced-motion:reduce){.update-notice{animation:none}}';
   const box=doc.createElement('section');box.className='update-notice';box.hidden=true;box.setAttribute('aria-label','版本更新');box.setAttribute('role','status');
   const header=doc.createElement('header'),title=doc.createElement('strong'),close=doc.createElement('button'),notes=doc.createElement('p'),link=doc.createElement('a');
-  close.type='button';close.textContent='×';close.setAttribute('aria-label','关闭更新提示');link.textContent='查看下载页面';link.target='_blank';link.rel='noopener noreferrer';header.append(title,close);box.append(header,notes,link);doc.body.append(box);
+  close.type='button';close.append(createIcon('close',{size:18}));close.setAttribute('aria-label','关闭更新提示');link.textContent='查看下载页面';link.target='_blank';link.rel='noopener noreferrer';header.append(title,close);box.append(header,notes,link);doc.body.append(box);
   function snapshot(){return {result:last?structuredClone(last):null,error,checkedAt,busy:!!pending,revision};}
   function paint(){
     box.hidden=!visible||!last?.hasUpdate;title.textContent=last?`发现新版本 ${last.latest}（当前 ${last.current}）`:'';notes.textContent=last?.notes||'';
@@ -50,3 +52,4 @@ export function createUpdateNotice({api,doc=document,win=window,onStatus=()=>{}}
   function dispose(){if(disposed)return;disposed=true;win.clearTimeout(timer);box.remove();style.remove();doc.querySelector('#nav button[data-panel=settings]')?.classList.remove('update-available');}
   return {check,action,snapshot,repaint:paint,dispose};
 }
+

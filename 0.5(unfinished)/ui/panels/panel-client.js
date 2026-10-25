@@ -2,7 +2,7 @@ import {setRefreshInterval} from './refresh-policy.js';
 import {panelApiRequestTimeout} from './request-timeouts.js';
 import {resetDestructiveActions} from './destructive-action.js';
 
-let nonce='',panel='',sequence=0,leaving=false,leaveId=null,initialViewState={},settingsSave=false;
+let nonce='',panel='',sequence=0,leaving=false,leaveId=null,initialViewState={},settingsSave=false,contentAnnounced=false;
 const waiters=new Map(),events=new Set(),beforeLeaveHandlers=new Set(),leaveHandlers=new Set(),stateProviders=new Map();
 const shellOrigin='*'; // sandbox iframe has opaque origin; source + panel + nonce remain mandatory validation.
 const ready=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('安全握手超时')),15000);window.addEventListener('panel-ready',()=>{clearTimeout(timer);resolve();},{once:true});});
@@ -52,10 +52,17 @@ export async function rpc(method,params={},timeout=15000){
   await ready;
   return new Promise((resolve,reject)=>{const id=`p${++sequence}`,timer=setTimeout(()=>settle(id,'reject',new Error('请求超时')),timeout);waiters.set(id,{resolve,reject,timer});send({jsonrpc:'2.0',id,method,params});});
 }
+/** First real content (including a visible error), separate from the secure handshake. */
+export async function contentReady(){
+  try{await ready;}catch{return false;}
+  if(leaving||contentAnnounced)return false;
+  contentAnnounced=true;send({jsonrpc:'2.0',method:'panel.contentReady'});return true;
+}
 export const request=(method,path,body,query)=>rpc('api.request',{method,path,body,query},panelApiRequestTimeout(method,path));
 /** 面板向宿主申请换肤：shell 校验后落地并广播（面板自身无宿主存储与 DOM 的访问权）。 */
 export const applyHostTheme=(theme)=>rpc('theme.apply',{theme});
 export const openCommunityPage=target=>rpc('ui.openExternal',{target});
+export const openLocalProtocolPage=(target,id)=>rpc('ui.openExternal',{target,...(id?{id}:{})});
 export const consoleUpdate=payload=>rpc('console.update',payload);
 export const openConsoleTokenManager=()=>rpc('console.manageToken');
 export const openCaptchaDiagnostics=()=>rpc('ui.captchaDiagnostics');

@@ -1,5 +1,6 @@
 import {button,destructiveButton,text} from '../ui.js';
 import {installDisposableDialog} from '../dialog-lifecycle.js';
+import {bindAutoSave,flushAutoSaves} from './auto-save.js';
 import {TransactionDraft,withinDraftBudget,packFields,restoreFields} from './transaction-draft.js';
 import {priceCatalogue} from './model-price-data.js';
 const FIELDS=[['in','输入 / 百万 Token'],['out','输出 / 百万 Token'],['cached','缓存 / 百万 Token']];
@@ -26,7 +27,8 @@ export function createModelPriceEditor({request,providers=()=>[],beforeOpen=asyn
     const search=node('input');search.type='search';search.placeholder='搜索模型 ID、名称或提供商';search.value=filter;body.append(search,feedback,host,comparison);
     const idLabel=node('label','目录外模型 ID'),idInput=node('input');idInput.value=newId;idInput.maxLength=200;idLabel.append(idInput);body.append(idLabel);
     dialog=root;notice=message=>{if(dialog===root)text(feedback,message+(!cacheable(packed())?' 当前草稿超出跨页缓存容量，输入仍保留在当前页面；请先保存再离开。':uncachedPrevious?' 上次草稿超出跨页缓存容量，未跨页保留；旧缓存已失效，请核对服务器已保存的内容。':''));};
-    installDisposableDialog(root,{onClosed:()=>{if(dialog===root){dialog=null;drawCurrent=()=>{};notice=()=>{};++ticket;}}});document.body.append(root);root.showModal();
+    const autoSave=bindAutoSave(root,commit,{dirty:()=>[...rows.values()].some(dirty),accept:event=>event.target.matches('[data-price]')});
+    installDisposableDialog(root,{beforeClose:()=>flushAutoSaves(root),onClosed:()=>{autoSave.dispose();if(dialog===root){dialog=null;drawCurrent=()=>{};notice=()=>{};++ticket;}}});document.body.append(root);root.showModal();
     let loaded=false;
     function draw(){
       if(dialog!==root)return;host.replaceChildren();
@@ -36,7 +38,7 @@ export function createModelPriceEditor({request,providers=()=>[],beforeOpen=asyn
         const quote=quotes.get(id),reference=node('p'),effective=node('p');reference.dataset.priceReference=id;effective.dataset.priceEffective=id;
         text(reference,quote?`目录参考（${quote.reference?.origin??'未提供'}）：${format(quote.reference)}`:'目录参考：读取中…');text(effective,quote?`当前有效计价（${quote.current?.source??'未提供'}）：${format(quote.current)}`:'当前有效计价：读取中…');box.append(reference,effective);
         for(const[key,label]of FIELDS){const wrap=node('label',label),input=node('input');input.type='number';input.min='0';input.step='any';input.dataset.model=id;input.dataset.price=key;input.value=row.draft.value(key);input.disabled=!loaded;input.placeholder=quote?.reference?.[key]==null?'':String(quote.reference[key]);input.addEventListener('input',()=>applyInput(id,key,input.value));wrap.append(input);box.append(wrap);}
-        box.append(destructiveButton('清除自定义价',()=>{row.remove=true;for(const[key]of FIELDS)row.draft.set(key,'');for(const input of box.querySelectorAll('[data-price]'))input.value='';notice('已清除草稿中的整行自定义价；保存后使用当前计价策略。');},{target:()=>box,clicks:2,key:()=>id,impact:`清除 ${id} 整行自定义价格，保存后使用当前计价策略。`}));
+        box.append(destructiveButton('清除自定义价',()=>{row.remove=true;for(const[key]of FIELDS)row.draft.set(key,'');for(const input of box.querySelectorAll('[data-price]'))input.value='';autoSave.schedule();},{target:()=>box,clicks:2,key:()=>id,impact:`清除 ${id} 的自定义价格。`}));
       }
     }
     drawCurrent=draw;search.addEventListener('input',()=>{filter=search.value.slice(0,200);draw();});idInput.addEventListener('input',()=>{newId=idInput.value;});
@@ -47,18 +49,18 @@ export function createModelPriceEditor({request,providers=()=>[],beforeOpen=asyn
       // Metadata responses enhance existing nodes, never redraw a live input.
       for(const box of host.querySelectorAll('[data-model-row]')){const quote=quotes.get(box.dataset.modelRow);if(!quote)continue;text(box.querySelector('[data-price-reference]'),`目录参考（${quote.reference?.origin??'未提供'}）：${format(quote.reference)}`);text(box.querySelector('[data-price-effective]'),`当前有效计价（${quote.current?.source??'未提供'}）：${format(quote.current)}`);for(const input of box.querySelectorAll('[data-price]'))input.placeholder=quote.reference?.[input.dataset.price]==null?'':String(quote.reference[input.dataset.price]);}
     }
-    const saveButton=button('保存',commit,'primary'),compareButton=button('对比服务器版本',compare),actions=node('div');actions.className='actions';actions.append(saveButton,compareButton,button('关闭（保留草稿）',()=>root.close()),button('放弃草稿',()=>{for(const row of rows.values()){row.draft.pending.clear();row.remove=false;}comparison.replaceChildren();draw();notice('已放弃本窗口尚未保存的价格改动。');}));body.append(actions);
+    const saveButton=button('保存',commit,'primary'),compareButton=button('处理冲突',compare),actions=node('div');saveButton.hidden=true;actions.className='actions';actions.append(saveButton,compareButton,button('完成',()=>root.close()));body.append(actions);
     async function commit(){
       if(saving||!loaded)return;const sent=new Map(),changes=[];let confirmed=0;
-      try{for(const[id,row]of rows){if(!dirty(row))continue;const snap=row.draft.snapshot(number);sent.set(id,{snap,remove:row.remove});changes.push(row.remove?{id,remove:true,expectedRow:row.rowRevision}:{id,patch:snap.patch,expected:snap.expected});}if(!changes.length){root.close();return;}
+      try{for(const[id,row]of rows){if(!dirty(row))continue;const snap=row.draft.snapshot(number);sent.set(id,{snap,remove:row.remove});changes.push(row.remove?{id,remove:true,expectedRow:row.rowRevision}:{id,patch:snap.patch,expected:snap.expected});}if(!changes.length)return;
         saving=true;saveButton.disabled=true;notice('正在保存价格…');
         for(let offset=0;offset<changes.length;offset+=64){
           const batch=changes.slice(offset,offset+64),receipt=await request('PUT','/api/model-price-overrides',{changes:batch});
           for(const view of receipt.entries){const row=rows.get(view.id),own=sent.get(view.id);if(!row||!own)continue;row.draft.accept(own.snap,strings(view));row.rowRevision=view.rowRevision;if(own.remove&&!row.draft.pending.size)row.remove=false;}
           confirmed+=batch.length;uncachedPrevious=false;onSaved(receipt);notice(`已保存 ${confirmed}/${changes.length} 个模型，正在继续…`);
         }
-        quotes.clear();if(dialog===root){comparison.replaceChildren();draw();if(![...rows.values()].some(dirty))root.close();else notice('上次提交已保存，提交期间的新输入尚未保存。');}
-      }catch(error){notice(`${error.message}；${confirmed?`已确认保存 ${confirmed} 个模型；其余未确认改动仍在草稿中。`:''}价格草稿保留，可重试或对比服务器版本。`);}finally{saving=false;saveButton.disabled=false;}
+        quotes.clear();if(dialog===root){comparison.replaceChildren();await loadQuotes([...sent.keys()]);notice('');}
+      }catch(error){notice(error.message);return false;}finally{saving=false;saveButton.disabled=false;}
     }
     async function compare(){
       try{const latest=await request('GET','/api/model-price-overrides');if(dialog!==root)return;comparison.replaceChildren();const map=new Map(latest.entries.map(view=>[view.id,view]));

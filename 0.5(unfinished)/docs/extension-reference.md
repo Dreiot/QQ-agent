@@ -80,6 +80,7 @@ export default {
 | `kind` | `skill` 或 `plugin`，默认 skill | 与目录用途保持一致 |
 | `apiVersion` | number，原生使用 `1` | 0.4 也用过 1，**它不能单独识别旧 API**；新代码不要加 compat 标记 |
 | `entry` | string，默认 `index.js` | ESM 入口；必须在自身目录内，不能符号链接穿越 |
+| `update` | object 或省略 | 在线更新来源：`{"type":"github","repo":"owner/repo","asset":"扩展名.zip"}`；按[在线更新发布说明](extension-online-updates.md)上传完整 Release 附件。无来源时保留本地重新加载 |
 | `enabledByDefault` | boolean，默认 true | 范例设为 false，安装后由用户启用；已有用户开关优先 |
 | `category` | `model/message/knowledge/media/utility`，默认 utility | 这是扩展分类；不是工具分类 |
 | `permissions` | string[]，默认 `[]` | 所需宿主权限，见第 5 节；清单声明不是管理员授权 |

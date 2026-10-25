@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { ICON_NAMES } from '../ui/panels/icons.js';
 const root = path.resolve(import.meta.dirname, '..');
-const evidenceDir = path.join(root, '.qa-local/endfield-readiness-icons-20261013');
+const evidenceDir = path.join(root, '.qa-local/icon-redesign-20261023');
 fs.mkdirSync(evidenceDir, { recursive: true });
 const names = [...ICON_NAMES, 'unknown'];
 const statusFamilies = ['onebot', 'model'];
@@ -22,7 +22,7 @@ for(const id of ['budget-a','budget-b'])for(let i=0;i<6;i++)document.querySelect
 document.querySelector('#css-hidden-owner').append(createIcon('sessions'));
 document.querySelector('#nested-icon-wrapper').append(createIcon('plugins'));
 document.querySelector('#selected-link').append(createIcon('chats'));
-window.clearSelection=()=>{for(const node of document.querySelectorAll('[aria-selected],[aria-current],[data-icon-active]')){if(node.hasAttribute('aria-selected'))node.setAttribute('aria-selected','false');node.removeAttribute('aria-current');if(node.hasAttribute('data-icon-active'))node.dataset.iconActive='false';}};
+window.clearSelection=()=>{document.activeElement?.blur?.();for(const node of document.querySelectorAll('[aria-selected],[aria-current],[data-icon-active]')){if(node.hasAttribute('aria-selected'))node.setAttribute('aria-selected','false');node.removeAttribute('aria-current');if(node.hasAttribute('data-icon-active'))node.dataset.iconActive='false';}};
 window.chooseIcon=name=>{window.clearSelection();document.querySelector('#icon-'+name).setAttribute('aria-selected','true');};
 window.restorePluginGlyph=()=>document.querySelector('#icon-plugins').append(createIcon('plugins',{size:28}));
 window.iconEffects=()=>document.getAnimations().filter(a=>a.effect?.target?.closest?.('.qq-icon'));
@@ -86,22 +86,67 @@ try {
   await page.locator('#outside').focus();await page.keyboard.press('Tab');
   await frame.waitForFunction(()=>document.activeElement?.id==='icon-sessions');
   assert.equal(await panel.locator('#icon-sessions').evaluate(button=>button.matches(':focus-visible')),true);
-  assert.equal(await frame.evaluate(()=>window.iconEffects().length),0,'Unselected visible keyboard focus stays still');
+  await waitActive('icon-sessions');
+  assert.ok(await frame.evaluate(()=>window.effectsFor('icon-sessions').every(a=>a.playState==='running')),'A page tab loops throughout visible keyboard focus');
   await panel.locator('#budget-a').hover();await panel.locator('#budget-a').focus();
   await frame.evaluate(()=>{document.querySelector('#budget-a').classList.add('active');document.body.dataset.iconActive='true';});
   assert.equal(await frame.evaluate(()=>window.iconEffects().length),0,'Ordinary action buttons remain static even inside an opted-in ancestor');
   await clear();
   for(const name of names){
     await panel.locator('#icon-'+name).click();await waitActive('icon-'+name);
-    const effects=await frame.evaluate(id=>window.effectsFor(id).map(animation=>({duration:animation.effect.getTiming().duration,iterations:animation.effect.getTiming().iterations===Infinity?'infinite':animation.effect.getTiming().iterations,target:animation.effect.target.tagName,part:animation.effect.target.dataset.iconPart??null,role:animation.effect.target.dataset.iconRole??null})),'icon-'+name);
+    const effects=await frame.evaluate(id=>window.effectsFor(id).map(animation=>({duration:animation.effect.getTiming().duration,iterations:animation.effect.getTiming().iterations===Infinity?'infinite':animation.effect.getTiming().iterations,target:animation.effect.target.tagName,part:animation.effect.target.dataset.iconPart??null,role:animation.effect.target.dataset.iconRole??animation.effect.target.dataset.iconMotion??null})),'icon-'+name);
     assert.ok(effects.length>0&&effects.length<=3,name+' has bounded simple semantic effects');
-    assert.ok(effects.every(effect=>effect.iterations==='infinite'&&effect.duration>=2200&&effect.duration<=3200&&effect.role),'Selected motion addresses semantic parts within the bounded cycle duration');
+    assert.ok(effects.every(effect=>effect.iterations==='infinite'&&(name==='emblem'?effect.duration===1000:effect.duration>=1400&&effect.duration<=2400)&&effect.role),'Selected motion addresses semantic parts within its bounded cycle duration; the brand advances eight generations per second');
     if(name==='memory')assert.deepEqual(effects.map(effect=>effect.role),['portrait'],'Only the member portrait moves, not the surrounding impression records');
     if(name==='usage')assert.deepEqual(effects.map(effect=>effect.role).sort(),['meter-a','meter-b','meter-c']);
     if(name==='settings')assert.deepEqual(effects.map(effect=>effect.role).sort(),['control-a','control-b','control-c']);
     result.semantic.push({name,effects});
     await clear();assert.equal(await frame.evaluate(()=>window.iconStill()),true);
   }
+  // Freeze native effects at sampled phases, then inspect the actual SVG paths
+  // through their transformed screen matrices. This includes the largest user
+  // motion/stroke choices rather than only comparing two still screenshots.
+  await frame.evaluate(()=>{document.body.style.setProperty('--icon-motion-scale','1.8');document.body.style.setProperty('--icon-stroke','3');});
+  result.canvasSamples=[];
+  for(const name of names){
+    await select('icon-'+name);
+    const sample=await frame.evaluate(id=>{
+      const svg=document.querySelector('#'+id+' svg'),box=svg.getBoundingClientRect(),effects=window.effectsFor(id);
+      const bounds={left:box.left,top:box.top,right:box.right,bottom:box.bottom};
+      const failures=[];let samples=0;
+      for(let phase=0;phase<16;phase++){
+        for(const effect of effects){effect.pause();effect.currentTime=effect.effect.getTiming().duration*phase/16;}
+        for(const path of svg.querySelectorAll('path')){
+          const matrix=path.getScreenCTM(),style=getComputedStyle(path),radius=style.stroke==='none'?0:parseFloat(style.strokeWidth)*Math.hypot(matrix.a,matrix.b)/2;
+          const length=path.getTotalLength();
+          for(let step=0;step<=128;step++){
+            const p=path.getPointAtLength(length*step/128),point=new DOMPoint(p.x,p.y).matrixTransform(matrix);samples++;
+            if(point.x-radius<bounds.left-.4||point.x+radius>bounds.right+.4||point.y-radius<bounds.top-.4||point.y+radius>bounds.bottom+.4){failures.push({role:path.dataset.iconRole,phase,point:{x:point.x-bounds.left,y:point.y-bounds.top},radius});break;}
+          }
+        }
+      }
+      const frames=effects.map(a=>a.effect.getKeyframes());
+      return{samples,failures,holds:frames.flatMap(parts=>parts.slice(1).filter((p,i)=>p.d!==undefined?p.d===parts[i].d:p.transform===parts[i].transform)).length,opacity:frames.some(parts=>parts.some(p=>p.opacity!==undefined))};
+    },'icon-'+name);
+    assert.deepEqual(sample.failures,[],name+' stays within its canvas at the largest motion and stroke');
+    assert.equal(sample.holds,0,name+' has no repeated idle-tail frames');
+    assert.equal(sample.opacity,false,name+' remains legible without opacity flashing');
+    result.canvasSamples.push({name,samples:sample.samples});await clear();
+  }
+  await frame.evaluate(()=>{document.body.style.removeProperty('--icon-motion-scale');document.body.style.removeProperty('--icon-stroke');});
+  await select('icon-settings');
+  result.personalization=await frame.evaluate(()=>{
+    const svg=document.querySelector('#icon-settings svg');return{width:svg.getBoundingClientRect().width,stroke:getComputedStyle(svg).strokeWidth,duration:window.effectsFor('icon-settings')[0].effect.getTiming().duration};
+  });
+  await frame.evaluate(()=>{document.body.style.setProperty('--icon-size','30px');document.body.style.setProperty('--icon-stroke','2.5');document.body.style.setProperty('--icon-motion-speed','2');});
+  await frame.waitForFunction(()=>window.effectsFor('icon-settings')[0]?.effect.getTiming().duration===1000);
+  assert.equal(await panel.locator('#icon-settings svg').evaluate(svg=>svg.getBoundingClientRect().width),42,'Global icon size retains the 28/20 page-tab hierarchy');
+  assert.equal(await panel.locator('#icon-settings svg').evaluate(svg=>getComputedStyle(svg).strokeWidth),'2.5px');
+  await frame.evaluate(()=>document.body.dataset.iconMotion='off');await waitStill();
+  await frame.evaluate(()=>document.body.dataset.iconMotion='on');await waitActive('icon-settings');
+  await frame.evaluate(()=>document.body.style.setProperty('--icon-motion-scale','0'));await waitStill();
+  await frame.evaluate(()=>{for(const name of ['--icon-size','--icon-stroke','--icon-motion-speed','--icon-motion-scale'])document.body.style.removeProperty(name);});await waitActive('icon-settings');
+  await clear();
   await panel.locator('#icon-sessions').click();await waitActive('icon-sessions');
   await frame.evaluate(()=>window.retainedEffects=window.iconEffects());
   await panel.locator('#icon-memory').hover();await panel.locator('#blur-target').focus();
@@ -161,22 +206,23 @@ try {
   await clear();await frame.evaluate(()=>window.restorePluginGlyph());
   assert.equal(await frame.evaluate(()=>window.iconEffects().length),0,'Restoring an unselected glyph does not restart motion');
   await select('icon-memory');
-  const optInStatusIds=['icon-status-qq-ready','icon-status-onebot-pending'];
+  const optInStatusIds=['icon-status-onebot-ready','icon-status-onebot-pending'];
   await frame.evaluate(ids=>{for(const id of ids)document.getElementById(id).dataset.iconActive='true';},optInStatusIds);
   for(const id of optInStatusIds)await waitActive(id);
   await frame.evaluate(ids=>{window.statusOptInEffects=ids.flatMap(id=>window.effectsFor(id));},optInStatusIds);
   await page.waitForTimeout(3200);
   result.statusOptIn=await frame.evaluate(ids=>ids.map(id=>({id,selected:document.getElementById(id).getAttribute('aria-selected'),current:document.getElementById(id).getAttribute('aria-current'),active:document.getElementById(id).dataset.iconActive,effects:window.effectsFor(id).map(a=>({role:a.effect.target.dataset.iconRole,state:a.playState,iteration:a.effect.getComputedTiming().currentIteration}))})),optInStatusIds);
   assert.ok(result.statusOptIn.every(status=>status.selected==='false'&&status.current===null&&status.active==='true'&&status.effects.length===2&&status.effects.every(effect=>effect.state==='running'&&effect.iteration>=1)),'Ready and pending indicators continue through explicit opt-in without selecting their tab');
-  assert.deepEqual(result.statusOptIn[0].effects.map(effect=>effect.role).sort(),['kernel','ready']);
+  assert.deepEqual(result.statusOptIn[0].effects.map(effect=>effect.role).sort(),['bridge','ready']);
   assert.deepEqual(result.statusOptIn[1].effects.map(effect=>effect.role).sort(),['bridge','gap']);
   await frame.evaluate(()=>{window.colorChangeEffects=window.iconEffects();window.changeIconTheme('#4499ff');});
   await frame.waitForFunction(()=>getComputedStyle(document.querySelector('#icon-memory svg')).stroke==='rgb(68, 153, 255)');
-  result.colors=await frame.evaluate(()=>({glyphs:[...document.querySelectorAll('.gallery .qq-icon')].map(svg=>({name:svg.dataset.iconMotion,stroke:getComputedStyle(svg).stroke,solid:[...svg.querySelectorAll('[fill="currentColor"]')].map(part=>({role:part.dataset.iconRole,fill:getComputedStyle(part).fill})),lines:[...svg.querySelectorAll('[data-icon-role]:not([fill="currentColor"])')].map(part=>getComputedStyle(part).stroke)})),empty:{source:getComputedStyle(document.querySelector('#empty-preview'),'::before').maskImage,fill:getComputedStyle(document.querySelector('#empty-preview'),'::before').backgroundColor,color:getComputedStyle(document.querySelector('#empty-preview')).color},fallback:document.querySelector('#icon-unknown .qq-icon').dataset.iconMotion,unexpectedMarkup:document.querySelector('#icon-unknown .qq-icon').querySelectorAll('script,img,foreignObject').length,hostStorage:(()=>{try{localStorage.getItem('x');return'accessible';}catch{return'opaque';}})()}));
+  result.colors=await frame.evaluate(()=>({glyphs:[...document.querySelectorAll('.gallery .qq-icon')].map(svg=>({name:svg.dataset.iconMotion,stroke:getComputedStyle(svg).stroke,solid:[...svg.querySelectorAll('[fill="currentColor"]')].map(part=>({role:part.dataset.iconRole,fill:getComputedStyle(part).fill})),lines:[...svg.querySelectorAll('[data-icon-role]:not([stroke="none"])')].map(part=>getComputedStyle(part).stroke)})),brandFill:getComputedStyle(document.querySelector('#icon-emblem path')).fill,empty:{source:getComputedStyle(document.querySelector('#empty-preview'),'::before').maskImage,fill:getComputedStyle(document.querySelector('#empty-preview'),'::before').backgroundColor,color:getComputedStyle(document.querySelector('#empty-preview')).color},fallback:document.querySelector('#icon-unknown .qq-icon').dataset.iconMotion,unexpectedMarkup:document.querySelector('#icon-unknown .qq-icon').querySelectorAll('script,img,foreignObject').length,hostStorage:(()=>{try{localStorage.getItem('x');return'accessible';}catch{return'opaque';}})()}));
   const accent='rgb(68, 153, 255)';
   assert.equal(result.colors.glyphs.length,names.length,'Every factory glyph is present again for the theme check');
   assert.deepEqual([...new Set(result.colors.glyphs.map(glyph=>glyph.name))].sort(),[...ICON_NAMES].sort(),'Theme inheritance covers the complete allowlist as well as the unknown-name fallback');
   assert.ok(result.colors.glyphs.every(glyph=>glyph.stroke===accent&&glyph.lines.every(color=>color===accent)&&glyph.solid.every(part=>part.fill===accent)),'Every SVG stroke and solid semantic part inherits the changed theme color');
+  assert.equal(result.colors.brandFill,'rgb(61, 155, 255)','The reference brand retains its blue cells when the interface accent changes');
   assert.ok(result.colors.glyphs.reduce((count,glyph)=>count+glyph.solid.length,0)>0,'The color check includes solid anchors and controls');
   assert.ok(result.colors.empty.source.includes('/assets/endfield/archive.svg'));assert.equal(result.colors.empty.fill,result.colors.empty.color,'Local SVG empty-state mask uses currentColor');
   assert.equal(result.colors.fallback,'panel');assert.equal(result.colors.unexpectedMarkup,0);assert.equal(result.colors.hostStorage,'opaque');

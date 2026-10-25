@@ -17,6 +17,7 @@ const files = [
   '18-orchestrator-test.mjs',
   '19-onebot-e2e-test.mjs',
   '49-transport-inject-test.mjs','56-wake-roll-once-test.mjs','60-telemetry-totals-test.mjs',
+  '305-session-flow-test.mjs',
 ];
 
 let pass = 0, fail = 0;

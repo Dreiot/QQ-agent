@@ -17,10 +17,10 @@ const f=await modelUiFixture({nativeVisibility:process.env.QA_HEADED==='1',confi
 let running=null,other=null;
 const events=[];
 try{
-  await f.page.addInitScript(()=>{window.__timers256=new Map();const start=window.setInterval.bind(window),stop=window.clearInterval.bind(window);window.setInterval=(fn,ms,...args)=>{const id=start(fn,ms,...args);window.__timers256.set(id,ms);return id;};window.clearInterval=id=>{window.__timers256.delete(id);stop(id);};});
+  await f.page.addInitScript(()=>{window.__frameTimes256=[];window.__frames256=new Set();const raf=window.requestAnimationFrame.bind(window),caf=window.cancelAnimationFrame.bind(window);window.requestAnimationFrame=fn=>{const owned=new Error().stack.includes('/panels/sessions/session-activity.js');const id=raf(time=>{if(owned){window.__frames256.delete(id);window.__frameTimes256.push(time);if(window.__frameTimes256.length>500)window.__frameTimes256.shift();}fn(time);});if(owned)window.__frames256.add(id);return id;};window.cancelAnimationFrame=id=>{window.__frames256.delete(id);caf(id);};window.__timers256=new Map();const start=window.setInterval.bind(window),stop=window.clearInterval.bind(window);window.setInterval=(fn,ms,...args)=>{const id=start(fn,ms,...args);window.__timers256.set(id,ms);return id;};window.clearInterval=id=>{window.__timers256.delete(id);stop(id);};});
   await f.page.goto(f.base);await f.page.locator('#nav button[data-panel=sessions]').click();await f.frame.locator('#sessions-panel[data-ready=true]').waitFor();await f.frame.locator('#follow').uncheck();
   let reads=0;f.page.on('request',request=>{if(new URL(request.url()).pathname.startsWith('/api/sessions'))reads++;});
-  const timers=()=>f.frame.locator('body').evaluate(()=>[...window.__timers256.values()]);
+  const timers=()=>f.frame.locator('body').evaluate(()=>[...window.__timers256.values(),...[...window.__frames256].map(()=>'raf')]);
   assert.deepEqual(await timers(),[]);
   async function start(chatKey,previous=false){
     plan={calls:0,generation:gate(),tool:gate(),second:gate()};
@@ -37,10 +37,16 @@ try{
   const sameCard=card=>card.evaluate(n=>n===window.__card256&&n.querySelector('.flow-duration')===window.__duration256&&n.parentElement===window.__root256&&document.querySelector('#detail')===window.__detail256);
   const first=await start('group:25601',true),generation=f.frame.locator('.flow-think.flow-pending');
   assert.equal(first.activeStep.messageIndex,3,'retry/previous-run offset reaches the actual future message index');
+  assert.equal(await generation.evaluate(n=>n.open),true,'a live thought opens immediately so incoming reasoning is visible');
   await generation.locator(':scope > summary').click();await generation.evaluate(async n=>{await Promise.allSettled(n.getAnimations().map(a=>a.finished));});
-  await stableCard(generation);await pause(160);const readBefore=reads;await grows(generation.locator('.flow-duration'));assert.equal(reads,readBefore,'100ms painting must not perform server reads');assert.equal(await sameCard(generation),true);
+  await generation.locator(':scope > summary').click();await generation.evaluate(async n=>{await Promise.allSettled(n.getAnimations().map(a=>a.finished));});
+  await stableCard(generation);await pause(160);const readBefore=reads;await grows(generation.locator('.flow-duration'));assert.equal(reads,readBefore,'frame-aligned painting must not perform server reads');assert.equal(await sameCard(generation),true);
   await grows(f.frame.locator('.session-elapsed'));
   const generationStart=first.activeStep.startedAt;plan.notifyRequest?.();plan.notifyRequest?.();await pause(150);assert.equal(first.activeStep.startedAt,generationStart);assert.equal(await sameCard(generation),true,'request retry notices must keep the same in-flight slot');
+  const frameTiming=await f.frame.locator('body').evaluate(()=>{const times=window.__frameTimes256.slice(-80),gaps=times.slice(1).map((time,index)=>time-times[index]).filter(gap=>gap>0).sort((a,b)=>a-b);return{frames:times.length,medianMs:gaps[Math.floor(gaps.length*.5)]??null,p95Ms:gaps[Math.floor(gaps.length*.95)]??null,over100ms:gaps.filter(gap=>gap>=100).length};});
+  assert.ok(frameTiming.frames>8,'a visible running clock follows visual frames instead of a 100ms tick');
+  console.log('FRAME_TIMING_256 '+JSON.stringify(frameTiming));
+  if(evidence)fs.writeFileSync(path.join(evidence,'frame-timing.json'),JSON.stringify(frameTiming,null,2));
   assert.equal(await f.frame.locator('#detail').evaluate(n=>n.getAnimations().some(a=>a.playState==='running')),false);
   assert.equal(await generation.evaluate(n=>n.open),true);
   if(evidence)await f.page.screenshot({path:path.join(evidence,'thinking-running.png'),fullPage:true});
@@ -51,32 +57,32 @@ try{
   const tool=f.frame.locator('.flow-tool.flow-pending');await tool.locator(':scope > summary').click();await tool.evaluate(async n=>{await Promise.allSettled(n.getAnimations().map(a=>a.finished));});await stableCard(tool);await grows(tool.locator('.flow-duration'));
   assert.equal(await sameCard(tool),true);assert.equal(await tool.locator('.flow-hint').innerText(),'调用中');
   if(process.env.QA_HEADED==='1'){
-    other=await f.page.context().newPage();await other.goto('about:blank');await other.bringToFront();await f.page.waitForFunction(()=>document.hidden,undefined,{polling:50});await wait(async()=>!(await timers()).includes(100));
+    other=await f.page.context().newPage();await other.goto('about:blank');await other.bringToFront();await f.page.waitForFunction(()=>document.hidden,undefined,{polling:50});await wait(async()=>!(await timers()).includes('raf'));
     const hidden=await tool.locator('.flow-duration').innerText();await pause(250);assert.equal(await tool.locator('.flow-duration').innerText(),hidden);
-    await f.page.bringToFront();await f.page.waitForFunction(()=>!document.hidden,undefined,{polling:50});await wait(async()=>(await timers()).includes(100));await grows(tool.locator('.flow-duration'));await other.close();other=null;
+    await f.page.bringToFront();await f.page.waitForFunction(()=>!document.hidden,undefined,{polling:50});await wait(async()=>(await timers()).includes('raf'));await grows(tool.locator('.flow-duration'));await other.close();other=null;
   }
   if(evidence)await f.page.screenshot({path:path.join(evidence,'tool-running.png'),fullPage:true});
   plan.tool.resolve();await f.frame.locator('.flow-tool.flow-success').waitFor();const toolDone=f.frame.locator('.flow-tool.flow-success');assert.equal(await sameCard(toolDone),true);assert.equal(await toolDone.evaluate(n=>n.open),true);
   const fixedTool=await toolDone.locator('.flow-duration').innerText();await f.frame.locator('.flow-think.flow-pending').waitFor();await grows(f.frame.locator('.flow-think.flow-pending .flow-duration'));assert.equal(await toolDone.locator('.flow-duration').innerText(),fixedTool);
   const secondStart=first.activeStep.startedAt,beforeLeave=await f.frame.locator('.flow-think.flow-pending .flow-duration').innerText();
   await f.page.locator('#nav button[data-panel=settings]').click();await f.frame.locator('#status').waitFor();await pause(250);await f.page.locator('#nav button[data-panel=sessions]').click();await f.frame.locator('.flow-think.flow-pending').waitFor();
-  assert.equal(first.activeStep.startedAt,secondStart);assert.notEqual(await f.frame.locator('.flow-think.flow-pending .flow-duration').innerText(),beforeLeave);await grows(f.frame.locator('.flow-think.flow-pending .flow-duration'));assert.equal((await timers()).filter(ms=>ms===100).length,1,'remount owns exactly one local paint interval');
-  plan.second.resolve();await running;running=null;await wait(async()=>!(await timers()).includes(100));assert.equal(first.status,'noreply');assert.equal(first.activeStep,null);
+  assert.equal(first.activeStep.startedAt,secondStart);assert.notEqual(await f.frame.locator('.flow-think.flow-pending .flow-duration').innerText(),beforeLeave);await grows(f.frame.locator('.flow-think.flow-pending .flow-duration'));assert.equal((await timers()).filter(ms=>ms==='raf').length,1,'remount owns exactly one local animation-frame clock');
+  plan.second.resolve();await running;running=null;await wait(async()=>!(await timers()).includes('raf'));assert.equal(first.status,'noreply');assert.equal(first.activeStep,null);
   events.push('real tool start/completion and next generation reuse slots; hidden clocks stop and resume with elapsed continuity');
   const toolFailure=await start('group:25604');plan.toolResult={ok:false,error:'固定本地工具失败'};plan.generation.resolve();await f.frame.locator('.flow-tool.flow-pending').waitFor();const failedTool=f.frame.locator('.flow-tool.flow-pending');await stableCard(failedTool);await grows(failedTool.locator('.flow-duration'));plan.tool.resolve();await f.frame.locator('.flow-tool.flow-error').waitFor();assert.equal(await sameCard(f.frame.locator('.flow-tool.flow-error')),true);const failedToolTime=await f.frame.locator('.flow-tool.flow-error .flow-duration').innerText();await pause(250);assert.equal(await f.frame.locator('.flow-tool.flow-error .flow-duration').innerText(),failedToolTime);plan.second.resolve();await running;running=null;assert.equal(toolFailure.activeStep,null);
   events.push('failed tool completion freezes in place while the next model step is free to start');
   const failure=await start('group:25602');const failing=f.frame.locator('.flow-think.flow-pending');await stableCard(failing);await grows(failing.locator('.flow-duration'));plan.generation.reject(Error('固定本地模型失败'));await running;running=null;
-  await f.frame.locator('.flow-think.flow-error').waitFor();assert.equal(failure.status,'error');assert.equal(await sameCard(f.frame.locator('.flow-think.flow-error')),true);const fixedFailure=await f.frame.locator('.flow-think.flow-error .flow-duration').innerText();await pause(250);assert.equal(await f.frame.locator('.flow-think.flow-error .flow-duration').innerText(),fixedFailure);await wait(async()=>!(await timers()).includes(100));
+  await f.frame.locator('.flow-think.flow-error').waitFor();assert.equal(failure.status,'error');assert.equal(await sameCard(f.frame.locator('.flow-think.flow-error')),true);const fixedFailure=await f.frame.locator('.flow-think.flow-error .flow-duration').innerText();await pause(250);assert.equal(await f.frame.locator('.flow-think.flow-error .flow-duration').innerText(),fixedFailure);await wait(async()=>!(await timers()).includes('raf'));
   events.push('failed generation freezes its original pending card');
   const canceledGeneration=await start('group:25605');const cancelGeneration=f.frame.locator('.flow-think.flow-pending');await stableCard(cancelGeneration);await grows(cancelGeneration.locator('.flow-duration'));f.kernel.orchestrator.abortSession(canceledGeneration.id);await f.frame.locator('.flow-think.flow-aborted').waitFor();const canceledGenerationTime=await f.frame.locator('.flow-think.flow-aborted .flow-duration').innerText();await pause(250);assert.equal(await f.frame.locator('.flow-think.flow-aborted .flow-duration').innerText(),canceledGenerationTime);plan.generation.resolve();await running;running=null;await wait(()=>Promise.resolve(canceledGeneration.activeStep===null));assert.equal(await sameCard(f.frame.locator('.flow-think.flow-aborted')),true);assert.equal(await f.frame.locator('.flow-think.flow-aborted .flow-duration').innerText(),canceledGenerationTime);
   events.push('canceling a model request freezes immediately and its late response cannot change the duration');
   const aborted=await start('group:25603');plan.generation.resolve();await f.frame.locator('.flow-tool.flow-pending').waitFor();const cancel=f.frame.locator('.flow-tool.flow-pending');await stableCard(cancel);await grows(cancel.locator('.flow-duration'));
-  assert.equal(f.kernel.orchestrator.abortSession(aborted.id).ok,true);await f.frame.locator('.flow-tool.flow-aborted').waitFor();await wait(async()=>!(await timers()).includes(100));const fixedAbort=await f.frame.locator('.flow-tool.flow-aborted .flow-duration').innerText();await pause(250);assert.equal(await f.frame.locator('.flow-tool.flow-aborted .flow-duration').innerText(),fixedAbort);
+  assert.equal(f.kernel.orchestrator.abortSession(aborted.id).ok,true);await f.frame.locator('.flow-tool.flow-aborted').waitFor();await wait(async()=>!(await timers()).includes('raf'));const fixedAbort=await f.frame.locator('.flow-tool.flow-aborted .flow-duration').innerText();await pause(250);assert.equal(await f.frame.locator('.flow-tool.flow-aborted .flow-duration').innerText(),fixedAbort);
   plan.tool.resolve();await running;running=null;await wait(()=>Promise.resolve(aborted.activeStep===null));assert.equal(await sameCard(f.frame.locator('.flow-tool.flow-aborted')),true);assert.equal(await f.frame.locator('.flow-tool.flow-aborted .flow-duration').innerText(),fixedAbort,'late success cannot restart or rewrite the aborted clock');
   events.push('abort freezes immediately even when the synthetic tool ignores abort; late result retains the same fixed clock');
   for(const request of requests)for(const message of request){assert.equal('activeStep'in message,false);assert.equal('generationState'in message,false);assert.equal('toolCall'in message,false);}
   // Terminal panels release their local paint interval, including after leave.
-  f.kernel.orchestrator.pause();await wait(async()=>!(await timers()).includes(100));
+  f.kernel.orchestrator.pause();await wait(async()=>!(await timers()).includes('raf'));
   await f.page.locator('#nav button[data-panel=settings]').click();await f.frame.locator('#status').waitFor();
   assert.deepEqual(f.errors,[]);assert.equal(f.outbound(),0);
   if(evidence)fs.writeFileSync(path.join(evidence,'result.json'),JSON.stringify({passed:true,headed:process.env.QA_HEADED==='1',events,realRunnerOrchestrator:true,localClockNoExtraReads:true,modelPayloadClean:true,externalRequests:0,liveConsoleAccessed:false},null,2)+'\n');

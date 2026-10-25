@@ -6,6 +6,7 @@ import {formatDuration,sessionDuration,formatCacheRate,sessionCacheRate,cacheTon
 const labels={waiting:'等待中',running:'运行中',done:'已回复',noreply:'未回复',error:'失败',aborted:'已中止'};
 const content=value=>typeof value==='string'?value:JSON.stringify(value??'',null,2);
 const snapshots=new WeakMap();
+const streamFrames=new WeakMap();
 const nodeKey=node=>node.nodeType===1?(node.dataset.key?`key:${node.dataset.key}`:node.dataset.sent!==undefined?`sent:${node.dataset.sent}`:null):null;
 const compatible=(a,b)=>a?.nodeType===b.nodeType&&(b.nodeType!==1||a.localName===b.localName);
 
@@ -46,7 +47,7 @@ export function renderSessionTrace(host,data,{waiting}={}){
   }
   const entries=[...(data.messages||[])],step=data.activeStep;
   if(step&&step.messageIndex===entries.length&&['generation','tool'].includes(step.kind)){
-    if(step.kind==='generation')entries.push({role:'assistant',content:'',generationState:step.state,generationStartedAt:step.startedAt,generationElapsedMs:step.elapsedMs,...(step.state!=='running'?{generationDurationMs:step.elapsedMs}:{})});
+    if(step.kind==='generation')entries.push({role:'assistant',content:step.content||'',reasoning_content:step.reasoning||'',generationState:step.state,generationStartedAt:step.startedAt,generationElapsedMs:step.elapsedMs,...(step.state!=='running'?{generationDurationMs:step.elapsedMs}:{})});
     else entries.push({role:'tool',toolCall:{name:step.name,args:step.args,state:step.state,startedAt:step.startedAt,elapsedMs:step.elapsedMs,...(step.state!=='running'?{durationMs:step.elapsedMs,ok:step.state==='completed'}:{})}});
   }
   const receipts=data.sent||[],claimed=new Set(),sentByCall=new Map();
@@ -97,10 +98,11 @@ export function renderSessionTrace(host,data,{waiting}={}){
     const value=content(message.content),reasoning=message.reasoning_content??message.reasoning;
     if(!value.trim()&&!reasoning&&message.tool_calls?.length&&message.generationDurationMs==null)return;
     const pending=message.generationState==='running'&&data.status==='running',aborted=message.generationState==='aborted'||message.generationState==='running'&&data.status==='aborted',failed=message.generationState==='error';
-    const section=fold(key,'思考',pending?'进行中':aborted?'已中止':failed?'失败':'不发送',pending?'flow-think flow-pending':aborted?'flow-think flow-aborted':failed?'flow-think flow-error':'flow-think');
+    const section=fold(key,'思考',pending?'进行中':aborted?'已中止':failed?'失败':'不发送',pending?'flow-think flow-pending':aborted?'flow-think flow-aborted':failed?'flow-think flow-error':'flow-think',pending||!!reasoning);
     duration(section,key,{state:message.generationState,startedAt:message.generationStartedAt,elapsedMs:message.generationElapsedMs,durationMs:message.generationDurationMs,title:'本轮模型请求用时，包含网络与重试'});
-    const text=jsonDetails('正文',value||'（无文本输出）');remember(text,`${key}-content`,true);section.append(text);
-    for(const [name,title,entry] of [['reasoning','推理摘要',reasoning],['tool_calls','模型请求的工具',message.tool_calls],['raw','原始响应与用量',message.raw]]){
+    const reasoningView=jsonDetails('思考过程',reasoning||'');reasoningView.className='flow-reasoning';remember(reasoningView,`${key}-reasoning`,true);reasoningView.hidden=!reasoning;section.append(reasoningView);
+    const text=jsonDetails('正文',value||(pending?'等待模型输出…':'（无文本输出）'));remember(text,`${key}-content`,true);section.append(text);
+    for(const [name,title,entry] of [['tool_calls','模型请求的工具',message.tool_calls],['raw','原始响应与用量',message.raw]]){
       if(entry==null)continue;const child=jsonDetails(title,entry);remember(child,`${key}-${name}`);section.append(child);
     }
     body.append(section);
@@ -109,5 +111,26 @@ export function renderSessionTrace(host,data,{waiting}={}){
   if(data.error&&data.status!=='aborted'){const section=fold('error','错误','运行异常','flow-error error',true);section.append(pre(data.error));body.append(section);}
   const reason=data.status==='aborted'?(data.finishReason||data.error||'已中止'):data.finishReason;
   if(reason){const section=fold('finish','结束原因',data.status==='aborted'?'已中止':'结束本次','flow-finish',true);section.append(pre(reason));body.append(section);}
-  patch(host,body);snapshots.set(host,fingerprint);
+  patch(host,body);snapshots.set(host,fingerprint);streamFrames.set(host,{streamId:step?.streamId,revision:step?.revision});
+}
+
+// Keep the live card, folds, focus and scroll containers in place. Token frames
+// update two text nodes; the final round still uses the normal trace renderer.
+export function renderStreamingStep(host,data,options){
+  const step=data.activeStep,key=`message-${step?.messageIndex}`;
+  let card=host.querySelector(`[data-key="${key}"]`);
+  if(!card?.classList.contains('flow-pending')){renderSessionTrace(host,data,options);return;}
+  const previous=streamFrames.get(host),delta=options?.delta,append=delta&&!delta.reset&&previous?.streamId===step.streamId&&previous.revision===delta.fromRevision;
+  for(const [name,value]of [['content',step.content||'等待模型输出…'],['reasoning',step.reasoning||'']]){
+    const section=card.querySelector(`[data-key="${key}-${name}"]`),pre=section?.querySelector('pre');
+    const addition=delta?.[name]||'';
+    if(pre&&!(append&&!addition)){
+      const follow=pre.scrollHeight-pre.scrollTop-pre.clientHeight<=24,top=pre.scrollTop;
+      if(append&&addition&&(step[name]||'').length>addition.length&&pre.firstChild?.nodeType===3&&pre.childNodes.length===1)pre.firstChild.appendData(addition);
+      else if(pre.textContent!==value)pre.textContent=value;
+      if(follow)pre.scrollTop=pre.scrollHeight;else pre.scrollTop=top;
+    }
+    if(name==='reasoning'&&section&&section.hidden===!!value)section.hidden=!value;
+  }
+  streamFrames.set(host,{streamId:step.streamId,revision:step.revision});snapshots.delete(host);
 }

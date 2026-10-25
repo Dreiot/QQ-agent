@@ -1,11 +1,12 @@
-import {request,onShellEvent,onLeave,getViewState,onViewStateSnapshot} from '/panels/panel-client.js';
+import {request,onShellEvent,onLeave,getViewState,onViewStateSnapshot,contentReady} from '/panels/panel-client.js';
 import {createSelectionState} from '../selection-state.js';
 import {installListLayout} from '../list-layout.js';
 import {createMessageSweep} from './message-sweep.js';
-import {$,clear,row,button,destructiveButton,bindDestructiveAction} from '../ui.js';
+import {$,clear,row,selectableRow,button,destructiveButton,bindDestructiveAction} from '../ui.js';
 import {createQuoteMode} from './quote-mode.js';
 import {createChatHistory,captureMessageAnchor,restoreMessageAnchor} from './history.js';
 import {createMessageView} from './message-view.js';
+import {createLiveRefresh} from '../live-refresh.js';
 
 installListLayout(document.querySelector('section.grid'));
 const list=$('#list'),detail=$('#detail');
@@ -27,7 +28,7 @@ const quote=createQuoteMode({preview:$('#quote-preview'),status:$('#quote-status
 }});
 sweep=createMessageSweep({root:detail,enabled:()=>current===rendered&&(selectionMode||quote.active),changed:updateSelection});
 const history=createChatHistory({request:async(key,query)=>{const version=whitelistVersion,result=await request('GET',`/api/chats/${encodeURIComponent(key)}/messages`,undefined,{...query,scope:'allowlist'});if(version!==whitelistVersion)throw new DOMException('聊天白名单已变化','AbortError');return result;},onChange:commitHistory,onError:historyError});
-let eventTimer=null,eventAll=false;const eventKeys=new Set();
+let eventAll=false;const eventKeys=new Set();
 
 function renderList(){
   const query=$('#search').value.toLowerCase(),unread=$('#unread-only').checked;
@@ -45,10 +46,10 @@ function renderList(){
         destructiveButton('清空',async()=>{await request('POST',`/api/chats/${key}/clear`);if(current===key)await show(key,{refresh:true});await load();},{clicks:4,target:()=>[entry.item,...(current===key&&rendered===key?[detail]:[])],key:()=>key,canActivate:()=>items.some(chat=>(chat.key||chat.chatKey?.replace(':','_'))===key),impact:()=>`清空 ${entry.chat.chatName||key} 的全部聊天存档（当前 ${entry.chat.total??0} 条）。`}),
       ]);
       entry.item=item;entry.title=item.querySelector('strong');entry.summary=item.querySelector('.muted');item.dataset.chat=key;
-      item.addEventListener('click',event=>{if(!event.target.closest('button'))void show(key);});chatRows.set(key,entry);
+      entry.open=selectableRow(item,()=>void show(key));item.addEventListener('click',event=>{if(!event.target.closest('button'))void show(key);});chatRows.set(key,entry);
     }
     entry.chat=chat;putText(entry.title,chat.chatName||key);putText(entry.summary,`${chat.total??0} 条 · ${chat.lastText||''}`);
-    entry.item.classList.toggle('selected',key===current);next.push(entry.item);
+    entry.item.classList.toggle('selected',key===current);entry.open.setAttribute('aria-current',String(key===current));next.push(entry.item);
   }
   const empty=list.querySelector('.empty');if(!shown.length&&empty)next.push(empty);
   for(const node of [...list.children])if(!next.includes(node))node.remove();
@@ -60,8 +61,8 @@ async function load(){
   const version=++listVersion;
   try{const data=await request('GET','/api/chats',undefined,{scope:'allowlist'});if(version!==listVersion)return;items=data.chats||[];if(current&&!items.some(chat=>(chat.key||chat.chatKey?.replace(':','_'))===current)){
     history.reset();sweep.reset();quote.exit();deleteSelectionAction?.dispose();deleteSelectionAction=null;current=rendered=null;messages=[];hasMore=false;selectionMode=false;pendingRestore=null;selectionPending=false;messageViews.clear();readingStates.clear();expandedForwards.clear();shell=null;detail.inert=false;detail.removeAttribute('aria-busy');putText(detail,'此聊天不在聊天白名单中');
-  }renderList();await navigation.accept(items.map(chat=>chat.key||chat.chatKey?.replace(':','_')),{isCurrent:()=>version===listVersion});}
-  catch(reason){if(version===listVersion){let notice=list.querySelector('.refresh-error');if(!notice){notice=document.createElement('p');notice.className='error refresh-error';list.append(notice);}putText(notice,reason.message);}}
+  }renderList();await navigation.accept(items.map(chat=>chat.key||chat.chatKey?.replace(':','_')),{isCurrent:()=>version===listVersion});if(version===listVersion)void contentReady();}
+  catch(reason){if(version===listVersion){let notice=list.querySelector('.refresh-error');if(!notice){notice=document.createElement('p');notice.className='error refresh-error';list.append(notice);}putText(notice,reason.message);void contentReady();}}
 }
 function selectedIds(){return [...detail.querySelectorAll('.messages input[type=checkbox]:checked')].map(x=>Number(x.value));}
 function selectionKey(){return `${current||''}:${quote.active?'quote':'delete'}:${selectedIds().sort((a,b)=>a-b).join(',')}`;}
@@ -164,12 +165,12 @@ function show(key,{refresh=false,older=false,restored=false}={}){
 }
 $('#search').addEventListener('input',renderList);$('#unread-only').addEventListener('change',renderList);
 onShellEvent((name,payload)=>{
-  if(name!=='chat-update'&&name!=='status')return;
+  if(name!=='hello'&&name!=='chat-update'&&!(name==='status'&&payload?.configUpdated))return;
   if(name==='status'&&payload?.configUpdated){++whitelistVersion;++listVersion;}
   const normalized=typeof payload==='string'?payload.replace(':','_'):payload?.chatKey?.replace(':','_');
-  if(name==='status'||!payload||payload==='*')eventAll=true;else if(normalized)eventKeys.add(normalized);
-  if(eventTimer)return;
-  eventTimer=setTimeout(()=>{eventTimer=null;const refreshCurrent=eventAll||eventKeys.has(current);eventAll=false;eventKeys.clear();void load();if(current&&refreshCurrent)void show(current,{refresh:true});},80);
+  if(name==='hello'||name==='status'||!payload||payload==='*'||eventKeys.size>=256){eventAll=true;eventKeys.clear();}else if(normalized&&!eventAll)eventKeys.add(normalized);
+  recovery.request();
 });
-function dispose(){clearTimeout(eventTimer);history.dispose();sweep.dispose();deleteSelectionAction?.dispose();readingStates.clear();expandedForwards.clear();}
+const recovery=createLiveRefresh(async()=>{const key=current,refreshCurrent=eventAll||eventKeys.has(current)||!eventKeys.size;eventAll=false;eventKeys.clear();await load();if(current&&current===key&&refreshCurrent)await show(current,{refresh:true});});
+function dispose(){recovery.dispose();history.dispose();sweep.dispose();deleteSelectionAction?.dispose();readingStates.clear();expandedForwards.clear();}
 onLeave(dispose);window.addEventListener('pagehide',dispose,{once:true});void load();

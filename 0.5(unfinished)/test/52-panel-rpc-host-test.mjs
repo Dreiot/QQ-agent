@@ -69,5 +69,30 @@ try {
   const dotted={...manifest,id:'weather_panel',ownerId:'weather.v1',title:'Weather',entry:'index.html'};
   registry.register(dotted);assert.equal(registry.list()[0].ownerId,'weather.v1');
   await registry.replace([{...dotted,id:'bad id'},dotted]);assert.equal(registry.list().length,1);assert.equal(registry.list()[0].id,'weather_panel');
-  console.log('✓ 52-panel-rpc-host：身份/代际/工具/配置/token隔离/SSE隔离/启停重载全部通过');
+  registry.dispose();
+
+  // Exercise the host shortcut through both the initial ready handshake and
+  // reuse of an already mounted editor. Plugins never receive this intent.
+  const navigationMessages=new WeakMap();globalThis.document.createElement=()=>{const fixture=frameFixture();navigationMessages.set(fixture.frame,fixture.sent);return fixture.frame;};
+  async function navigationCase(definition,options,expected,label){
+    const nav=new PanelRegistry({frameHost:{replaceChildren(){}},api:{}});nav.register(definition);
+    try{
+      const navFrame=await nav.mount(definition.id,options),navBridge=nav.current.bridge,messages=navigationMessages.get(navFrame),settingsEvents=()=>messages.filter(message=>message.method==='shell.event'&&message.params?.name==='settings-section').map(message=>message.params.payload);
+      assert.deepEqual(settingsEvents(),[],label+' waits for the iframe handshake');
+      await navBridge.handle({source:navFrame.contentWindow,origin:'null',data:{jsonrpc:'2.0',method:'panel.ready',meta:{nonce:navBridge.nonce,panel:definition.id}}});
+      assert.deepEqual(settingsEvents(),expected?[expected]:[],label+' initial navigation payload');
+      assert.equal(await nav.mount(definition.id,options),navFrame,label+' preserves the ready editor');
+      assert.deepEqual(settingsEvents(),expected?[expected,expected]:[],label+' active editor navigation payload');
+      assert.equal(navFrame.src.endsWith('#'+options.section),!!expected,label+' navigation fragment follows the same allowed section');
+    }finally{nav.dispose();}
+  }
+  const settings={id:'settings',kind:'bundled',title:'设置',permissions:[],api:[]};
+  for(const connectQQ of [true,'123456','12345678901234567890'])await navigationCase(settings,{section:'onebot',connectQQ},{section:'onebot',connectQQ},'valid connection intent '+String(connectQQ));
+  for(const connectQQ of [false,null,'','1234','123456789012345678901',123456,{accountId:'123456'},'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','http://127.0.0.1:5099/'])await navigationCase(settings,{section:'onebot',connectQQ},{section:'onebot'},'invalid connection intent '+JSON.stringify(connectQQ));
+  for(const section of ['models','access'])await navigationCase(settings,{section,connectQQ:'123456'},{section},'other settings section '+section);
+  await navigationCase(settings,{section:'not-declared',connectQQ:true},null,'unknown settings section');
+  await navigationCase({...settings,id:'replacement_settings',navigation:{role:'configuration'}},{section:'onebot',connectQQ:'123456'},{section:'onebot',connectQQ:'123456'},'bundled configuration replacement');
+  await navigationCase({...settings,id:'logs'},{section:'onebot',connectQQ:true},null,'unrelated bundled panel');
+  await navigationCase({...manifest,id:'settings',title:'Plugin settings',entry:'index.html',navigation:{role:'configuration'}},{section:'onebot',connectQQ:true},null,'user panel with a settings-looking identity');
+  console.log('✓ 52-panel-rpc-host：身份/代际/工具/配置/token隔离/SSE隔离/启停重载/连接意图导航边界全部通过');
 } finally { globalThis.window = oldWindow; globalThis.document = oldDocument; }

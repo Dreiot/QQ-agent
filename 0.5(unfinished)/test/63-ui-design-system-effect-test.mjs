@@ -83,6 +83,7 @@ try {
         pageOverflow: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - innerWidth,
         clicks, disabled: disabled.disabled,
         iconColor: getComputedStyle(icon).color, innerColor: getComputedStyle(inner).color,
+        iconStroke:getComputedStyle(icon).stroke,iconFill:getComputedStyle(icon.querySelector('[fill="currentColor"]')).fill,
         hostileSafe: hostile.tagName.toLowerCase()==='svg' && !hostile.querySelector('script,img,foreignObject,[onload],[onerror]'),
         closedHidden: getComputedStyle(closed).display==='none',
       });
@@ -101,6 +102,8 @@ try {
   }
   assert.equal(m.clicks, 1, '普通按钮可交互，禁用按钮不会触发操作');
   assert.equal(m.iconColor, m.innerColor, '图标继承所在控件的主题色');
+  assert.equal(m.iconStroke,m.innerColor,'图标的实际描边继承控件颜色');
+  assert.equal(m.iconFill,m.innerColor,'图标的实际实心部分继承控件颜色');
   assert.ok(m.hostileSafe, '未知图标元数据不会转成可执行HTML');
   assert.ok(m.closedHidden, '未打开的dialog不进入文档布局');
   console.log('✓ 追加控件获得统一外观、可操作性、语义色与安全图标');

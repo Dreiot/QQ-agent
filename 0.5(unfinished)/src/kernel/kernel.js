@@ -32,13 +32,14 @@ export function createKernel({
     if (typeof implementation !== 'function') throw new TypeError(`运行时组件 ${name} 必须是函数`);
   }
   const lifecycle = suppliedLifecycle ?? createCompositionLifecycle();
-  let businessSealed = false, resetCoordinator, quiescingConsole = false;
+  let businessSealed = false, resetCoordinator, quiescingConsole = false, accounts=null,accountGateway=null;
   const guards = createResetGuards({ isSealed: () => businessSealed, canConfigure: () => !resetCoordinator || resetCoordinator.canConfigure() });
   const resourceDisposers = new Map();
   const cleanupMethods = {
     'runtime.capability': 'close', 'runtime.permissions': 'close', 'runtime.scheduler': 'stop',
     'runtime.plugins': 'stopAll', 'runtime.services': 'stop', 'runtime.http': 'close',
-    'data.sessions': 'stop', 'core.orchestrator': 'stop', 'console.sse': 'close',
+    'data.sessions': 'stop', 'core.orchestrator': 'stop', 'console.sse': 'close', 'runtime.localProtocols': 'close', 'runtime.protocolLogin': 'close',
+    'runtime.accounts': 'close', 'runtime.accountGateway': 'close',
   };
   const release = (name, ...args) => resourceDisposers.get(name)?.(...args);
   const construct = (name, options) => {
@@ -71,6 +72,8 @@ export function createKernel({
   const serviceFacade = components['runtime.serviceFacade'];
   const profile = resolveProfile(env);
   const dataDir = resolveDataDir(env, appRoot);
+  const extensionRoot=env.QQ_AGENT_EXTENSION_ROOT?path.resolve(env.QQ_AGENT_EXTENSION_ROOT):appRoot;
+  const runtimeCacheRoot=env.QQ_AGENT_RUNTIME_CACHE_ROOT?path.resolve(env.QQ_AGENT_RUNTIME_CACHE_ROOT):undefined;
   const personaText = construct('runtime.persona.text', { appRoot });
 
   const defaults = construct('runtime.config.defaults', { portOffset: profile.portOffset, personaText });
@@ -90,6 +93,21 @@ export function createKernel({
   const config = guards.config(construct('runtime.config', { dataDir, defaults, log }));
   config.load();
   const cfg = () => config.get();
+  const localProtocols = construct('runtime.localProtocols', { appRoot, dataDir, config, bus, log, env });
+  const protocolLogin = construct('runtime.protocolLogin', { config, localProtocols, bus, fetchImpl,
+    onVerifiedAccount:async input=>{
+      if(!accounts)return null;
+      const workspace=await accounts.registerConnection(input);
+      if(workspace.workspaceId==='primary')return workspace;
+      // A listening worker is not yet proof of its own authenticated transport.
+      for(let attempt=0;attempt<80;attempt++){
+        const row=(await accounts.snapshot()).accounts.find(item=>item.id===workspace.workspaceId);
+        if(row?.connected&&row.accountId===input.accountId)return workspace;
+        if(row?.status==='error'||row?.status==='stopped')break;
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      throw Object.assign(new Error('账号工作区已创建，连接尚未就绪，请在账号管理中检查。'),{status:503,expose:true});
+    } });
 
   const capability = construct('runtime.capability', { log, selection: () => cfg().extensions?.providers ?? {},
     subscribeSelection: listener => config.onChange?.(listener) });
@@ -161,7 +179,7 @@ export function createKernel({
   let installZip = null;
   const facets = {
     'host.config': {},
-    'host.environment': Object.freeze({ appRoot, dataDir, version: VERSION, profile }),
+    'host.environment': Object.freeze({ appRoot, dataDir, version: VERSION, profile, ...(extensionRoot!==appRoot?{extensionRoot}:{}) }),
     'host.defaults': Object.freeze({ communityMarket: injectedCommunityMarket }),
     'data.messages': pick(store, ['recent', 'findByMid', 'updateByMid', 'listChats']),
     'data.memory': memoryAccess,
@@ -222,7 +240,7 @@ export function createKernel({
   }
   const sdk = construct('runtime.sdk', { config, permissions, facets, bus, loaderOf: () => loader, resolveProvider: (name) => services?.get(name) });
   const loader = construct('runtime.plugins', {
-    log, bus, appRoot, registry, capabilityRegistry: capability, permissions, scheduler, storage, config,
+    log, bus, appRoot, extensionRoot, runtimeCacheRoot, registry, capabilityRegistry: capability, permissions, scheduler, storage, config,
     sdkHost: { ...sdk, send: (chatKey, segments, options) => send.sendSegments(chatKey, segments, options), fetch: publicFetch,
       emit(name, payload, { entry, bundled }) {
         if (!bundled || entry.suspended || entry.controller.signal.aborted || name !== 'blocklist-sync') throw new Error('事件发布超出公共接口范围');
@@ -376,6 +394,7 @@ export function createKernel({
       return envPort === null ? current : { ...current, server: { ...current.server, port: envPort } };
     } }, log, bus,
     apiGuard: (request) => resetCoordinator?.apiGuard(request),
+    accountGateway:env.QQ_AGENT_ACCOUNTS_CHILD==='1'?null:request=>accountGateway.handle(request),
     staticDir: path.join(appRoot, 'ui', 'shell'),
     uiAssetResolver: (pathname) => panelAdapters?.resolveUiAsset?.(pathname) ?? null,
     // resolver 每次核验 active/代际/授权，只能访问 dedicated ui/，不暴露插件源码。
@@ -385,6 +404,11 @@ export function createKernel({
     // 这里只暴露 data/ui/backgrounds，且 safeJoinStatic 仍做两段式防穿越。
     extraStaticRoots: [{ prefix: '/ui/backgrounds/', root: path.join(dataDir ?? '', 'ui', 'backgrounds'), minSegments: 1 }],
   });
+  if(env.QQ_AGENT_ACCOUNTS_CHILD!=='1'){
+    accounts=construct('runtime.accounts',{appRoot,dataDir,config,bus,env,getPrimary:()=>({config,transport:transportView,orchestrator,httpServer,services})});
+    accountGateway=construct('runtime.accountGateway',{accounts,bus,config,getPrimaryBackend:()=>({port:httpServer.port,token:cfg().server?.token||'',generation:'primary:'+String(cfg().server?.token||'')})});
+    components['console.accounts'](httpServer,{accounts,bus,config});
+  }
   const sseBridge = construct('console.sse', { bus, http: httpServer });
   const startedAt = Date.now();
 
@@ -410,7 +434,7 @@ export function createKernel({
       return settings?.saveLifecycle?.kind === 'settings-v1'
         ? { owner: settings.stateOwner, generation: settings.stateGeneration } : null;
     },
-    startedAt, version: VERSION, appId: APP_ID, dataDir, transport: transportView, profile, appRoot, personaText, services, components, composition, lifecycle,
+    startedAt, version: VERSION, appId: APP_ID, dataDir, transport: transportView, profile, appRoot, extensionRoot, publicPrefix:env.QQ_AGENT_ACCOUNT_PREFIX||'', personaText, services, components, composition, lifecycle, localProtocols, protocolLogin,
     resetData: async () => {
       try { return await resetCoordinator.request(); }
       finally { bus.emit('status', { reset: resetCoordinator.status() }); }
@@ -553,7 +577,13 @@ export function createKernel({
       priceRefreshStop = scheduler.every(result.ok ? 86_400_000 : 10_800_000, refreshPrices, { ownerId: 'kernel', name: 'price-feed' });
     };
     void refreshPrices();
+    await accounts?.snapshot();
+    checkActive();
     await services.start();
+    checkActive();
+    await localProtocols.start();
+    checkActive();
+    await accounts?.restore();
     checkActive();
     running = true;
     if (cfg().proactive?.enabled) orchestrator.startProactiveLoop();
@@ -584,9 +614,11 @@ export function createKernel({
     quiescingConsole = true;
     invalidateLifecycle();
     const errors = [];
-    // HTTP and the instance lock survive to deliver the DTO and let the shell
-    // quit normally. Business stops via existing private host lifecycle.
-    for (const action of [() => orchestrator.pause(), () => release('runtime.services'), () => release('runtime.plugins'),
+    // Child account data is inside dataDir. Stop its writers before reset can
+    // back up that tree; HTTP and the instance lock survive to deliver the DTO.
+    for (const action of [() => orchestrator.pause(), () => release('runtime.accountGateway'), () => release('runtime.accounts'),
+      () => release('runtime.protocolLogin'), () => release('runtime.localProtocols'),
+      () => release('runtime.services'), () => release('runtime.plugins'),
       () => release('core.orchestrator'), () => release('runtime.permissions', '重置前停止'), () => release('runtime.scheduler'),
       () => release('data.sessions'), () => lifecycle.close(), () => log.flush()]) {
       try { await action(); } catch (error) { errors.push(error); }
@@ -601,6 +633,10 @@ export function createKernel({
   async function cleanup() {
     const errors = [];
     for (const action of [
+      () => release('runtime.accountGateway'),
+      () => release('runtime.accounts'),
+      () => release('runtime.protocolLogin'),
+      () => release('runtime.localProtocols'),
       () => release('runtime.services'),
       () => release('runtime.plugins'),
       () => release('core.orchestrator'),
@@ -634,7 +670,7 @@ export function createKernel({
   return {
     VERSION, APP_ID, dataDir, profile, components, composition, lifecycle,
     log, bus, config, capability, permissions, registry, scheduler, storage, loader, httpServer,
-    store, memory, sessions, send, ingest, orchestrator, transport: transportView, services,
+    store, memory, sessions, send, ingest, orchestrator, transport: transportView, services, localProtocols, protocolLogin, accounts,
     /** @deprecated 使用 transport；0.5.x 保留兼容 */
     get onebot() { return transportView; },
     start, stop,

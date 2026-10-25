@@ -10,5 +10,8 @@ const SEND_PANEL_TIMEOUT_MS=105000; // Let the host return its error before the 
 
 function isSlowSend(method,path){return String(method).toUpperCase()==='POST'&&typeof path==='string'&&TEST_SEND.test(path);}
 const isMarketInstall=(method,path)=>String(method).toUpperCase()==='POST'&&path==='/api/market/install';
-export function hostApiRequestTimeout(method,path,fallback=DEFAULT_TIMEOUT_MS){return isSlowSend(method,path)?SEND_HOST_TIMEOUT_MS:isMarketInstall(method,path)?180000:fallback;}
-export function panelApiRequestTimeout(method,path){return isSlowSend(method,path)?SEND_PANEL_TIMEOUT_MS:isMarketInstall(method,path)?185000:DEFAULT_TIMEOUT_MS;}
+const isExtensionUpdate=(method,path)=>String(method).toUpperCase()==='POST'&&/^\/api\/extensions\/[^/]+\/update$/.test(path);
+const isLocalProtocolStart=(method,path)=>String(method).toUpperCase()==='POST'&&path==='/api/local-protocols/start';
+const loginBudget=(method,path)=>String(method).toUpperCase()!=='POST'?0:['/api/local-protocols/login/inject','/api/accounts/start'].includes(path)?90000:['/api/accounts/stop','/api/accounts/remove'].includes(path)?30000:['/api/local-protocols/login/connect','/api/local-protocols/login/refresh'].includes(path)?35000:0;
+export function hostApiRequestTimeout(method,path,fallback=DEFAULT_TIMEOUT_MS){return isSlowSend(method,path)?SEND_HOST_TIMEOUT_MS:isMarketInstall(method,path)||isLocalProtocolStart(method,path)||isExtensionUpdate(method,path)?180000:path==='/api/extensions/updates/check'?60000:loginBudget(method,path)||fallback;}
+export function panelApiRequestTimeout(method,path){const login=loginBudget(method,path);return isSlowSend(method,path)?SEND_PANEL_TIMEOUT_MS:isMarketInstall(method,path)||isLocalProtocolStart(method,path)||isExtensionUpdate(method,path)?185000:path==='/api/extensions/updates/check'?65000:login?login+5000:DEFAULT_TIMEOUT_MS;}

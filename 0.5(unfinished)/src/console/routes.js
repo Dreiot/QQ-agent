@@ -23,6 +23,7 @@ import { createPeakScheduleController } from './peak-schedule.js';
 import { createBlocklistMemberController } from './blocklist-members.js';
 import { createBlocklistRawController } from './blocklist-raw.js';
 import { createSettingsSaveLifecycleController } from './settings-save-lifecycle.js';
+import {createExtensionUpdateController} from './extension-updates.js';
 import { createSessionNameController } from './session-names.js';
 import { copyTransportReadiness, safeTransportText, transportDiagnosis } from './transport-status.js';
 import { personaForChat } from '../kernel/persona.js';
@@ -34,8 +35,9 @@ import { createPriceUpdateAdapters, resolveCustomPrice, builtinModelPrice, manua
 import { createVisionScanAdapter } from './vision-scan-adapter.js';
 import { createSearchProviderAdapter } from './search-provider-adapter.js';
 import { createCommunityMarketAdapters, extractZipSafely, MARKET_MAX_ZIP_BYTES } from './community-market-adapters.js';
+import { registerLocalProtocolRoutes } from './local-protocols.js';
 import { APP_ROOT } from '../kernel/env.js';
-import { pluginFingerprint, normalizeManifest } from '../kernel/plugin-loader.js';
+import { pluginFingerprint, normalizeManifest, assertExtensionDirectory } from '../kernel/plugin-loader.js';
 import { serviceFacade } from '../kernel/service-host.js';
 
 function bad(message, status = 400) {
@@ -355,6 +357,7 @@ function allowSend(cfg, chatKey) {
 }
 
 export function registerConsoleRoutes(http, deps) {
+  (deps.components?.['console.localProtocols'] ?? registerLocalProtocolRoutes)(http,deps);
   // transport = 平台提供者（kernel 注入）。兼容键：老调用方可能仍传 onebot。
   const { config, sessions, store, memory, loader, orchestrator, log, capability, registry, permissions, startedAt = Date.now(), version = '0.5.0', appId = 'cn.kondius.qq-agent', dataDir } = deps;
   const transport = deps.transport ?? deps.onebot ?? null;
@@ -371,7 +374,7 @@ export function registerConsoleRoutes(http, deps) {
   // Standalone callers predate the capability host. Production resolves the
   // selected service on every request, including after enable/disable or pins.
   const legacyCommunityMarket = !capability && (!deps.marketClient || !deps.communityClient)
-    ? createCommunityMarketAdapters({ dataDir, config, fetchImpl: deps.fetchImpl, dnsLookup: deps.dnsLookup, appRoot: deps.appRoot ?? APP_ROOT, communityKey: deps.communityKey, installZip: installExtensionZip }) : null;
+    ? createCommunityMarketAdapters({ dataDir, config, fetchImpl: deps.fetchImpl, dnsLookup: deps.dnsLookup, appRoot: deps.appRoot ?? APP_ROOT, extensionRoot: deps.extensionRoot, communityKey: deps.communityKey, installZip: installExtensionZip }) : null;
   const selectedService = (name) => deps.services
     ? deps.services.get(name) : capability?.providers?.(name)?.[0]?.provider;
   const marketClient = deps.marketClient ?? legacyCommunityMarket ?? serviceFacade(() => selectedService('market.client'), ['listCatalog', 'listAccounts', 'login', 'logout', 'publish', 'install'], { label: '扩展市场' });
@@ -499,7 +502,8 @@ export function registerConsoleRoutes(http, deps) {
     fs.mkdirSync(dir, { recursive: true });
     const name = `bg-${crypto.randomBytes(6).toString('hex')}.${type.ext}`;
     fs.writeFileSync(path.join(dir, name), buf);
-    return { ok: true, url: `/ui/backgrounds/${name}`, bytes: buf.length, mime: type.mime };
+    const publicPrefix = /^\/accounts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(deps.publicPrefix ?? '') ? deps.publicPrefix : '';
+    return { ok: true, url: `${publicPrefix}/ui/backgrounds/${name}`, bytes: buf.length, mime: type.mime };
   });
   // 旧路径保留：已存进 config.json 的 /api/uikit/background/xxx 仍要能显示。
   // 注意它是"以 token 换取图片"的受控端点，不能当静态资源用（<img> 带不了 token）。
@@ -613,8 +617,8 @@ export function registerConsoleRoutes(http, deps) {
     if (typeof marketClient.listCatalog !== 'function') bad('当前市场提供者暂不支持在线目录，请检查扩展市场服务', 503);
     return marketClient.listCatalog({ kind: query.kind });
   });
-  http.route('POST', '/api/market/login', async ({ body }) => marketClient.login(body));
-  http.route('POST', '/api/market/logout', async ({ body }) => marketClient.logout(body));
+  http.route('POST', '/api/market/login', async ({ body }) => {const result=await marketClient.login(body);emit(deps,'status',{communityAccountsUpdated:true});return result;});
+  http.route('POST', '/api/market/logout', async ({ body }) => {const result=await marketClient.logout(body);emit(deps,'status',{communityAccountsUpdated:true});return result;});
   http.route('POST', '/api/market/publish', async ({ body }) => marketClient.publish(body));
   http.route('POST', '/api/market/install', ({ body }) => marketClient.install(body));
 
@@ -854,14 +858,18 @@ export function registerConsoleRoutes(http, deps) {
   http.route('POST', '/api/config/lifecycle/open', ({ body }) => settingsSaveLifecycle.open(body));
   const extensionDto = (entry) => ({ ...serializeSkill(entry), description: entry.description ?? '', status: entry.status, broken: Boolean(entry.loadError), available: entry.status === 'active' && !entry.loadError });
   const extensionView = () => { const view = skillView(); return { ...view, skills: (loader?.listEntries?.() ?? []).map(extensionDto) }; };
-  const managementRoot = path.resolve(deps.appRoot ?? APP_ROOT);
+  const applicationRoot = path.resolve(deps.appRoot ?? APP_ROOT);
+  const managementRoot = path.resolve(deps.extensionRoot ?? applicationRoot);
   http.route('GET', '/api/extensions/authoring-context', () => ({
-    version: deps.version ?? '0.5.0', appRoot: managementRoot,
+    version: deps.version ?? '0.5.0', appRoot: applicationRoot,
+    ...(managementRoot === applicationRoot ? {} : { extensionRoot: managementRoot }),
     docs: ['docs/plugin-sdk.md', 'docs/architecture-composition.md', 'docs/extension-authoring.md',
-      'docs/extension-reference.md', 'docs/v04-extension-parity.md', 'docs/ai-extension-prompt.md'],
+      'docs/extension-reference.md', 'docs/extension-online-updates.md', 'docs/v04-extension-parity.md', 'docs/ai-extension-prompt.md'],
   }));
   const managementDir = path.join(managementRoot, '.extension-management-v1');
   function safeManagementDirectory(name) {
+    try { assertExtensionDirectory(managementRoot, { create: true }); }
+    catch { bad('用户扩展根目录不安全', 403); }
     for (const dir of [managementDir, path.join(managementDir, name)]) {
       if (!fs.existsSync(dir)) fs.mkdirSync(dir);
       if (fs.lstatSync(dir).isSymbolicLink() || !fs.lstatSync(dir).isDirectory()) bad('管理目录不是普通目录', 403);
@@ -869,6 +877,11 @@ export function registerConsoleRoutes(http, deps) {
     return path.join(managementDir, name);
   }
   http.route('GET', '/api/skills', extensionView);
+  const extensionUpdates=(deps.components?.['console.extensionUpdates']??createExtensionUpdateController)({loader,config,managementRoot,safeDirectory:safeManagementDirectory,
+    fetchImpl:deps.fetchImpl,dnsLookup:deps.dnsLookup,lifecycle:deps.lifecycle,bus:deps.bus,publish:(name,payload)=>emit(deps,name,payload)});
+  http.route('GET','/api/extensions/updates',()=>extensionUpdates.snapshot());
+  http.route('POST','/api/extensions/updates/check',async({body})=>body?.id?{update:await extensionUpdates.check(body.id,{force:true})}:extensionUpdates.checkAll({force:true}));
+  http.route('POST',/^\/api\/extensions\/(?<id>[^/]+)\/update$/,({params,body})=>extensionUpdates.apply(params.id,body));
   http.route('POST', '/api/skills/reload', async () => {
     if (typeof loader?.loadAll !== 'function') bad('核心未提供 reloadSkills…', 500);
     const before = new Set((loader.listEntries?.() ?? []).map((entry) => entry.id));
@@ -895,6 +908,7 @@ export function registerConsoleRoutes(http, deps) {
   // 卸载仅移动用户代码到可恢复隔离区，不删除插件存储命名空间。
   http.route('POST', /^\/api\/skills\/(?<id>[^/]+)\/delete$/, async ({ params }) => {
     const id = params.id;
+    extensionUpdates.assertMutable?.(id);
     const entry = loader?.hostEntry?.(id);
     const dto = (loader?.listEntries?.() ?? []).find((item) => item.id === id);
     if (!entry || !dto) bad(`扩展不存在：${id}`, 404);
@@ -905,6 +919,7 @@ export function registerConsoleRoutes(http, deps) {
     let real;
     try {
       if (fs.lstatSync(root).isSymbolicLink() || fs.lstatSync(dir).isSymbolicLink()) bad('拒绝卸载符号链接目录', 403);
+      try { assertExtensionDirectory(root); assertExtensionDirectory(dir); } catch { bad('拒绝卸载符号链接目录', 403); }
       real = fs.realpathSync(dir);
       if (path.dirname(dir) !== root || path.dirname(real) !== fs.realpathSync(root)) bad('卸载目标必须是用户域的直接子目录', 403);
     } catch (e) { if (e.expose) throw e; bad('插件目录已不存在，请重扫磁盘', 409); }
@@ -936,6 +951,7 @@ export function registerConsoleRoutes(http, deps) {
   // 安全约束与权限一致：用户插件更新后指纹变化 → 旧授权立即失效，需重新授权。
   http.route('POST', /^\/api\/skills\/(?<id>[^/]+)\/hot-reload$/, async ({ params }) => {
     const id = params.id;
+    extensionUpdates.assertMutable?.(id);
     const entry = loader?.hostEntry?.(id);
     if (!entry) bad(`扩展不存在：${id}`, 404);
     if (entry.status === 'disabled') bad('该扩展已停用，请先启用再热更新', 409);
@@ -1004,9 +1020,11 @@ export function registerConsoleRoutes(http, deps) {
       const destination = path.join(root, manifest.id);
       const identities = (loader.listEntries?.() ?? []).map((item) => item.id.toLowerCase());
       for (const domain of ['bundled', 'plugins', 'skills']) {
-        const domainRoot = path.join(managementRoot, domain);
+        const domainRoot = path.join(domain === 'bundled' ? applicationRoot : managementRoot, domain);
         if (!fs.existsSync(domainRoot)) continue;
+        try { assertExtensionDirectory(domainRoot); } catch { bad('用户扩展根目录不安全', 403); }
         for (const name of fs.readdirSync(domainRoot)) {
+          if (fs.lstatSync(path.join(domainRoot, name)).isSymbolicLink()) bad('用户扩展根目录不安全', 403);
           if (name.toLowerCase() === manifest.id.toLowerCase()) bad(`目标或身份已存在：${manifest.id}`, 409);
           for (const file of ['skill.json', 'plugin.json']) {
             let installed = null;
@@ -1037,6 +1055,7 @@ export function registerConsoleRoutes(http, deps) {
     return installExtensionZip(Buffer.from(zipBase64, 'base64'), { requestedId: body?.skillId == null ? '' : String(body.skillId).trim(), kind: body?.kind });
   });
   http.route('POST', /^\/api\/skills\/(?<id>[^/]+)$/, async ({ params, body }) => {
+    extensionUpdates.assertMutable?.(params.id);
     const entry = (loader?.listEntries?.() ?? []).find((item) => item.id === params.id); if (!entry) bad(`Skill 不存在：${params.id}`, 404);
     if (body?.enabled !== undefined && typeof body.enabled !== 'boolean') bad('body.enabled 必须是布尔');
     if (body?.settings !== undefined && (!body.settings || typeof body.settings !== 'object' || Array.isArray(body.settings))) bad('body.settings 必须是对象');

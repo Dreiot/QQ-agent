@@ -1,5 +1,6 @@
 // Host-only lifecycle support for the provenance-checked default settings UI.
 // Payloads remain document RAM; only the fixed authenticated config route writes.
+import {accountStorageKey,resolveAccountScope,currentAccountScope} from '../panels/account-scope.js';
 export const SETTINGS_KEEPALIVE_BYTES=60*1024;
 export const SETTINGS_LEASE_KEY='qq-agent.settings-save-lease.v1';
 const object=value=>value&&typeof value==='object'&&!Array.isArray(value);
@@ -16,9 +17,11 @@ export function settingsSaveIdentity(manifest){
 }
 export function createSettingsSaveLifecycle({api,manifest,notify=()=>{},storage,now=()=>Date.now()}={}){
   const identity=settingsSaveIdentity(manifest);if(!identity)return null;
+  const leaseScope=typeof api?.base==='string'?resolveAccountScope({pathname:api.base.startsWith('/accounts/')?api.base:'/'}):currentAccountScope;
+  const storageKey=accountStorageKey(SETTINGS_LEASE_KEY,leaseScope);
   let latest=null,closed=false,lease=null,expiresAt=0,opening=null,storageAvailable=false;
-  try{storage??=globalThis.sessionStorage;if(storage){const value=storage.getItem(SETTINGS_LEASE_KEY);storage.setItem(SETTINGS_LEASE_KEY,value??'null');storageAvailable=true;}}catch{storageAvailable=false;}
-  function previous(){try{const row=JSON.parse(storage.getItem(SETTINGS_LEASE_KEY)||'null');return object(row)&&leaseId(row.lease)&&typeof row.retired==='boolean'?row:null;}catch{return null;}}
+  try{storage??=globalThis.sessionStorage;if(storage){const value=storage.getItem(storageKey);storage.setItem(storageKey,value??'null');storageAvailable=true;}}catch{storageAvailable=false;}
+  function previous(){try{const row=JSON.parse(storage.getItem(storageKey)||'null');return object(row)&&leaseId(row.lease)&&typeof row.retired==='boolean'?row:null;}catch{return null;}}
   const body=state=>({...identity,lease,revision:state.revision,patch:state.patch});
   function ensureLease(){
     if(closed)return Promise.reject(Error('设置界面已卸载'));
@@ -32,7 +35,7 @@ export function createSettingsSaveLifecycle({api,manifest,notify=()=>{},storage,
       if(closed){if(leaseId(result?.lease))await api.request('POST','/api/config/lifecycle/open',{...identity,parentLease:result.lease,retireParent:true,retireOnly:true});throw Error('设置界面已卸载');}
       if(!leaseId(result?.lease)||!Number.isFinite(result.expiresAt)||result.expiresAt<=now())throw Error('设置保存租约响应无效');
       lease=result.lease;expiresAt=result.expiresAt;
-      if(storageAvailable)try{storage.setItem(SETTINGS_LEASE_KEY,JSON.stringify({lease,retired:false}));}catch{storageAvailable=false;}
+      if(storageAvailable)try{storage.setItem(storageKey,JSON.stringify({lease,retired:false}));}catch{storageAvailable=false;}
       return lease;
     })().finally(()=>{opening=null;});return opening;
   }
@@ -62,5 +65,5 @@ export function createSettingsSaveLifecycle({api,manifest,notify=()=>{},storage,
     if(latest.guard)notify(latest.guard);
     event?.preventDefault?.();if(event)event.returnValue='';return true;
   }
-  return{ready,stage,save,beforeUnload,get dirty(){return Boolean(latest&&(latest.patch!==null||latest.error||latest.guard));},close(){if(lease&&storageAvailable){const row=previous();if(row?.lease===lease)try{storage.setItem(SETTINGS_LEASE_KEY,JSON.stringify({lease,retired:true}));}catch{storageAvailable=false;}}closed=true;latest=null;}};
+  return{ready,stage,save,beforeUnload,get dirty(){return Boolean(latest&&(latest.patch!==null||latest.error||latest.guard));},close(){if(lease&&storageAvailable){const row=previous();if(row?.lease===lease)try{storage.setItem(storageKey,JSON.stringify({lease,retired:true}));}catch{storageAvailable=false;}}closed=true;latest=null;}};
 }

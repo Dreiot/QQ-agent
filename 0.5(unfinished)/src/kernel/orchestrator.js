@@ -1,6 +1,7 @@
 // Orchestrator：唤醒调度 + 会话状态机（§6.4/§6.5/§6.8/§6.9/§6.11/§6.12/§6.13）。
 // 关键不变量：
 // - 逐条判定一次定生死；防抖不重置（窗口内新消息只入库）
+// - 运行期间普通新消息标已读；首次 @我起保留未读，收尾后合并为下一批
 // - 等待会话复用必须用 sessions.current() 活对象（get() 是克隆）
 // - 机械批逐条补判定（不能用"有没有等待会话"区分——tier 0 垃圾会话事故）
 // - 会话重试硬前提 sent.length===0（R-08：群里不会出现两遍同样的话）
@@ -62,6 +63,7 @@ export function createOrchestrator({
   const activeTimers = new Map(); // chatKey -> expiry timer (one timer per topic)
   const banCache = new Map();     // chatKey -> { muted, checkedAt }
   const aborters = new Map();     // sessionId -> AbortController
+  const mentionedDuringRun = new Set(); // sessionId：忙时已收到 @我，此后的消息留给下一批
   const wakeChecks = new Set();   // 正在等禁言查询的唤醒；此时尚未创建运行控制器
   let paused = false;
   let discoveryGeneration = 0;
@@ -196,10 +198,18 @@ export function createOrchestrator({
     watchContext();
     if (entry.recalled) return;
     if (isPausedNow()) return;
+    const runningSession = sessions.current(chatKey);
+    if (runningSession?.status === 'running') {
+      // 本轮触发批已经固定；首次真正的 @我及其后续消息，等本轮结束后统一处理。
+      // 拍一拍也带 atMe 标记，但不属于本条 @ 规则。
+      if (entry.atMe === true && !entry.isPoke) mentionedDuringRun.add(runningSession.id);
+      if (mentionedDuringRun.has(runningSession.id)) return;
+      store.markEntryRead(chatKey, entry.id);
+      bus?.emit('chat.update', chatKey);
+      return;
+    }
     if (!cfg().api?.model) return;         // 模型未设置：不判定（消息留未读，配好后自动补处理）
     if (pendingWake.has(chatKey)) return;  // 倒计时中：只入库，不重置倒计时（防抖不重置）
-    const runningSession = sessions.current(chatKey);
-    if (runningSession?.status === 'running') return;
     if (activeFor(chatKey)) { // 活跃期必响应
       scheduleWake(chatKey, null, { verified: false, proactive: false });
       return;
@@ -446,9 +456,11 @@ export function createOrchestrator({
         break;
       }
     }
+    mentionedDuringRun.delete(session.id);
     aborters.delete(session.id);
     contextScope?.stop();
-    // 10. drain：仍有未读 → 再跑一轮
+    // 10. 忙时 @我及其后续消息合并接续一轮；其余忙时消息已标读，不能触发补跑。
+    // 真正恢复的未消费积压也继续使用同一套机械判定。
     const rest = unreadForWake(chatKey);
     if (rest.length > 0 && !isPausedNow() && (!controller.signal.aborted || controller.signal.reason?.__contextInvalidated)) {
       scheduleWake(chatKey, Math.max(DRAIN_MIN_MS, Number(c.drainDelayMs) || 1200), { verified: false, reuse: false });
@@ -587,6 +599,11 @@ export function createOrchestrator({
       execContext,
       cfg: c, log, signal, llmInvoker, components, lifecycle, capabilities: capability, skipBeforeContext: true,
       invokeTool: toolBundle.invoke, hooksOf: (name) => loader?.hooksOf?.(name, { chatKey, signal, botName: chatPersona.botName }) ?? [],
+      onStream: ({step,delta}) => {
+        const activeStep={...step,messageIndex:previousMessages.length+step.messageIndex};
+        if(sessions.stream)sessions.stream(session,activeStep,delta);
+        else sessions.update(session,{activeStep});
+      },
       onRound: ({ round, messages, sent, usage, providerId, provider, model, vendor, activeStep }) => {
         sessions.update(session, { messages: [...previousMessages, ...messages], sent, usage, rounds: previousRounds + round, providerId, provider, model, vendor,
           activeStep: activeStep ? { ...activeStep, messageIndex: previousMessages.length + activeStep.messageIndex } : null });
@@ -848,6 +865,7 @@ export function createOrchestrator({
       return { ok: true };
     }
     if (s.status === 'running') {
+      mentionedDuringRun.delete(id);
       const ac = aborters.get(id);
       if (ac) ac.abort(Object.assign(new Error('用户中止'), { __aborted: true }));
       sessions.finish(id, 'aborted', { error: null, finishReason: '用户中止' });
@@ -859,6 +877,7 @@ export function createOrchestrator({
   }
 
   function abortAll() {
+    mentionedDuringRun.clear();
     for (const check of wakeChecks) {
       check.cancelled = true;
       const s = check.waiting;

@@ -157,6 +157,9 @@ export function configureUserData(electronApp, env = process.env, appRoot = APP_
   const userData = path.join(resolved.dataDir, 'electron-user-data');
   electronApp.setPath('userData', userData);
   process.env.QQ_AGENT_DATA_DIR = resolved.dataDir;
+  // Third-party runtimes stay beside the installed executable, outside the
+  // shipped application/resources tree. A caller may choose another directory.
+  if(electronApp.isPackaged&&!process.env.QQ_AGENT_PROTOCOL_DIR)process.env.QQ_AGENT_PROTOCOL_DIR=path.join(path.dirname(electronApp.getPath('exe')),'protocols');
   runtime = { ...resolved, userData, diagFile: path.join(resolved.dataDir, 'boot-diag.log') };
   appendBootDiag('main.js loaded');
   appendBootDiag('paths-resolved', `${resolved.source} dataDir=${resolved.dataDir}`);
@@ -516,6 +519,10 @@ function syncDesktopConfig(app) {
 }
 
 function handlePauseChange(paused) {
+  if(kernel?.accounts?.setPaused){
+    void kernel.accounts.setPaused(Boolean(paused)).then(()=>{tray?.refreshMenu?.();kernel?.bus?.emit?.('status',{paused:Boolean(paused),pauseReason:null});}).catch(()=>{dialogRef?.showErrorBox?.('QQ Agent 暂停状态未完全更新','部分账号未能修改暂停状态，请在账号管理中检查。');tray?.refreshMenu?.();});
+    return;
+  }
   if (paused) kernel?.orchestrator?.pause?.();
   else kernel?.orchestrator?.resume?.();
   tray?.refreshMenu?.();

@@ -21,6 +21,14 @@ try{
   assert.equal((await f.request('GET','/api/chats/group_10002/messages')).data.messages.length,1);assert.equal((await f.request('GET','/api/memory-files/private_20002')).data.members.length,1);
   checks.push('scoped lists/details match exact group/private whitelist IDs, preserve permitted empty memory placeholders, and leave stored data plus existing administrator reads intact');
   const logo=f.page.locator('button#brand-emblem');assert.equal(await f.page.locator('#navigation-collapse,.rail-controls,.collapse-chevron').count(),0);assert.equal(await logo.locator('svg').count(),1);assert.equal(await logo.getAttribute('aria-controls'),'nav');
+  await f.page.waitForFunction(()=>document.querySelector('#brand-emblem path')?.getAnimations().length===1);
+  const galaxy=await logo.evaluate(button=>{
+    const svg=button.querySelector('svg'),path=svg.querySelector('path'),effect=path.getAnimations()[0];
+    effect.pause();effect.currentTime=0;const initial=getComputedStyle(path).d;
+    effect.currentTime=200;const next=getComputedStyle(path).d;effect.play();
+    return{viewBox:svg.getAttribute('viewBox'),fill:getComputedStyle(path).fill,changed:initial!==next,effects:path.getAnimations().length,duration:effect.effect.getTiming().duration,frames:effect.effect.getKeyframes().length};
+  });
+  assert.deepEqual(galaxy,{viewBox:'0 0 68 68',fill:'rgb(61, 155, 255)',changed:true,effects:1,duration:1000,frames:9});
   const frameNode=await f.page.locator('#panel-host iframe').elementHandle(),writes=f.writes.length;assert.equal(await logo.getAttribute('aria-expanded'),'true');await logo.click();await until(()=>f.page.locator('body').getAttribute('data-rail-collapsed').then(v=>v==='true'));await delay(350);assert.equal(Math.round((await f.page.locator('.rail').boundingBox()).width),62);assert.equal(await frameNode.evaluate(n=>n.isConnected),true);assert.equal(f.writes.length,writes);assert.equal(await logo.getAttribute('aria-label'),'展开侧栏');await shot('brand-collapsed');
   await logo.focus();await f.page.keyboard.press('Enter');assert.equal(await logo.getAttribute('aria-expanded'),'true');await f.page.keyboard.press('Space');assert.equal(await logo.getAttribute('aria-expanded'),'false');await f.page.reload();await logo.waitFor();await f.page.locator('#nav button').first().waitFor();assert.equal(await logo.getAttribute('aria-expanded'),'false');await logo.click();await shot('brand-expanded');
   checks.push('only the emblem toggles the sidebar, with mouse/Enter/Space, truthful accessible state, persisted local preference and no frame remount or business writes');

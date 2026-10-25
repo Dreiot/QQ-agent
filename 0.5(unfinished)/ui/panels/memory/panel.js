@@ -1,10 +1,11 @@
-import {request,onShellEvent,onLeave,getViewState,onViewStateSnapshot} from '/panels/panel-client.js';
+import {createLiveRefresh} from '../live-refresh.js';
+import {request,onShellEvent,onLeave,getViewState,onViewStateSnapshot,contentReady} from '/panels/panel-client.js';
 import {installListLayout} from '../list-layout.js';
 import {createActiveTaskTicker} from '../active-task-ticker.js';
 import {collapsibleExpanded} from '../collapsible.js';
 installListLayout(document.querySelector('section.grid'));
 import {installDisposableDialog} from '../dialog-lifecycle.js';
-import {$,clear,text,row,button,destructiveButton,error,formDialog} from '../ui.js';
+import {$,clear,text,row,selectableRow,button,destructiveButton,error,formDialog} from '../ui.js';
 const list=$('#list'),detail=$('#detail');
 let current=null,rendered=null,listVersion=0,detailVersion=0,taskVersion=0,ticker=null;const tasks=new Map();
 const fileRows=new Map(),memberCards=new Map(),memberFolds=new Map();
@@ -39,7 +40,7 @@ async function loadChatNames(){
   try{const data=await request('GET','/api/chats',undefined,{scope:'allowlist'});if(version!==namesVersion)return;chatNames=new Map((data.chats||[]).map(chat=>[String(chat.chatKey||chat.key||'').replace(/^(group|private)_(\d+)$/,'$1:$2'),String(chat.chatName||'').trim()]));syncChatTitles();}
   catch{/* Names are optional: a failed lookup retains the last successful titles. */}
 }
-function syncSelection(){for(const [key,entry] of fileRows)entry.item.classList.toggle('selected',current===key);}
+function syncSelection(){for(const [key,entry] of fileRows){entry.item.classList.toggle('selected',current===key);entry.open.setAttribute('aria-current',String(current===key));}}
 function rememberMemberFolds(){if(rendered)for(const [uid,entry] of memberCards)memberFolds.set(`${rendered}\0${uid}`,collapsibleExpanded(entry.fold));}
 async function saveMemberNote(uid,note,expected){
   try{return await request('PUT',`/api/member-notes/${encodeURIComponent(uid)}`,{note:note.trim(),expected});}
@@ -182,13 +183,13 @@ async function load(){
     for(const file of files){const key=file.chatKey;
       let entry=fileRows.get(key);if(entry&&!entry.item.isConnected){fileRows.delete(key);entry=null;}if(!entry){
         entry={file,item:null};const item=row(key,'',[destructiveButton('删除',async()=>{await request('DELETE',`/api/memory-files/${encodeURIComponent(key.replace(':','_'))}`);forgetChatFolds(key);if(current===key){current=rendered=null;++detailVersion;text(detail,'记忆已清空');}await load();},{clicks:4,target:()=>[entry.item,...(current===key&&rendered===key?[detail]:[])],key:()=>key,canActivate:()=>fileRows.has(key),impact:()=>`清空 ${key} 的全部聊天记忆（${entry.file.memberCount??0} 位成员、${entry.file.impressionCount??0} 条印象）。`})]);
-        entry.item=item;entry.title=item.querySelector('strong');entry.summary=item.querySelector('.muted');item.dataset.memoryChat=key;item.addEventListener('click',e=>{if(!e.target.closest('button'))void show(key);});fileRows.set(key,entry);
+        entry.item=item;entry.title=item.querySelector('strong');entry.summary=item.querySelector('.muted');entry.open=selectableRow(item,()=>void show(key));item.dataset.memoryChat=key;item.addEventListener('click',e=>{if(!e.target.closest('button'))void show(key);});fileRows.set(key,entry);
       }
-      entry.file=file;text(entry.summary,`${file.memberCount??0} 位成员 · ${file.impressionCount??0} 条印象 · ${memoryUpdatedAt(file.updatedAt)}${file.consolidating?' · 整理中':''}`);entry.item.classList.toggle('selected',current===key);next.push(entry.item);
+      entry.file=file;text(entry.summary,`${file.memberCount??0} 位成员 · ${file.impressionCount??0} 条印象 · ${memoryUpdatedAt(file.updatedAt)}${file.consolidating?' · 整理中':''}`);entry.item.classList.toggle('selected',current===key);entry.open.setAttribute('aria-current',String(current===key));next.push(entry.item);
     }
     // Polling updates summaries without replacing controls mid-interaction.
-    for(const node of [...list.children])if(!next.includes(node))node.remove();next.forEach((node,index)=>{if(list.children[index]!==node)list.insertBefore(node,list.children[index]||null);});if(!files.length)list.append(Object.assign(document.createElement('div'),{className:'empty',textContent:'暂无记忆文件'}));syncChatTitles();return files;
-  }catch(e){if(version===listVersion)error(list,e.message);}
+    for(const node of [...list.children])if(!next.includes(node))node.remove();next.forEach((node,index)=>{if(list.children[index]!==node)list.insertBefore(node,list.children[index]||null);});if(!files.length)list.append(Object.assign(document.createElement('div'),{className:'empty',textContent:'暂无记忆文件'}));syncChatTitles();if(!disposed)void contentReady();return files;
+  }catch(e){if(!disposed&&version===listVersion){error(list,e.message);void contentReady();}}
 }
 async function show(key,{refresh=false}={}){
   if(refresh&&current!==key)return;rememberMemberFolds();current=key;syncSelection();const version=++detailVersion;
@@ -216,13 +217,15 @@ async function show(key,{refresh=false}={}){
 }
 $('#reload').addEventListener('click',()=>{void loadChatNames();void load();if(current)void show(current,{refresh:true});});
 const create=button('新增聊天记忆',()=>formDialog('新增聊天记忆',[{key:'chatKey',label:'聊天（group:群号 或 private:QQ号）',required:true,pattern:'(group|private):[0-9]+'}],async value=>{await show(value.chatKey);}));document.querySelector('header').append(create);
+const live=createLiveRefresh(async()=>{await load();if(current)await show(current,{refresh:true});});
 onShellEvent((name,payload)=>{
-  if(name==='status'&&payload?.configUpdated){++detailVersion;void loadChatNames();void load();return;}
-  if(name!=='memory-update')return;if(payload?.phase==='consolidate-start'){const task=tasks.get(payload.chatKey)||{startedAt:Date.now()};task.submitted=true;tasks.set(payload.chatKey,task);}else if(payload?.phase)tasks.delete(payload.chatKey);if(payload?.phase)++taskVersion;syncTaskButtons();void load();if(!current||(payload?.chatKey&&payload.chatKey!==current))return;
+  if(name==='hello'){void loadChatNames();live.request();return;}
+  if(name==='status'&&payload?.configUpdated){++detailVersion;void loadChatNames();live.request();return;}
+  if(name!=='memory-update')return;if(payload?.phase==='consolidate-start'){const task=tasks.get(payload.chatKey)||{startedAt:Date.now()};task.submitted=true;tasks.set(payload.chatKey,task);}else if(payload?.phase)tasks.delete(payload.chatKey);if(payload?.phase)++taskVersion;syncTaskButtons();live.request();if(!current||(payload?.chatKey&&payload.chatKey!==current))return;
   if(payload?.phase==='consolidate-start')taskStatus(current,'正在整理…');
   else if(payload?.phase==='consolidate-error')taskStatus(current,`整理失败：${payload.error||'本轮已放弃，原印象保留'}`);
-  else{if(payload?.phase==='consolidate-done')taskStatus(current,payload.failures?.length?`整理完成 · ${payload.failures.length} 位成员失败：${payload.failures.map(item=>typeof item==='string'?item:JSON.stringify(item)).join('；')}`:'整理完成');void show(current,{refresh:true});}
+  else{if(payload?.phase==='consolidate-done')taskStatus(current,payload.failures?.length?`整理完成 · ${payload.failures.length} 位成员失败：${payload.failures.map(item=>typeof item==='string'?item:JSON.stringify(item)).join('；')}`:'整理完成');live.request();}
 });
-ticker=createActiveTaskTicker({active:()=>tasks.size>0,tick:()=>{if(current&&tasks.has(current))taskStatus(current,`正在整理 · 已 ${Math.floor((Date.now()-tasks.get(current).startedAt)/1000)} 秒`);},poll:load});
-onLeave(()=>{disposed=true;++namesVersion;++listVersion;++detailVersion;ticker.dispose();});
+ticker=createActiveTaskTicker({active:()=>tasks.size>0,tick:()=>{if(current&&tasks.has(current))taskStatus(current,`正在整理 · 已 ${Math.floor((Date.now()-tasks.get(current).startedAt)/1000)} 秒`);}});
+onLeave(()=>{live.dispose();disposed=true;++namesVersion;++listVersion;++detailVersion;ticker.dispose();});
 void loadChatNames();void initializeNavigation().catch(()=>{});

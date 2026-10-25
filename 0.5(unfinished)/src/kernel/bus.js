@@ -6,9 +6,9 @@ const NAMES = new Set([
   // 消息链路（M1 接线）
   'message.in', 'message.out', 'message.sent', 'wake',
   // 会话与存档（M1）
-  'session.start', 'session.update', 'session.end', 'chat.update', 'memory.update',
+  'session.start', 'session.update', 'session.delta', 'session.end', 'chat.update', 'memory.update',
   // 传输与外部进程状态（M1/M4）
-  'onebot.status', 'transport.status', // 工具与权限
+  'onebot.status', 'transport.status', 'local-protocols', 'protocol-login', 'accounts', // 工具与权限
   'tool.call', 'tool.result', 'permission.ask', 'permission.decision',
   // LLM / 遥测 / 其它周期行为
   'llm.call', 'telemetry.tick', 'reminder.fire', 'market.install', 'vision.scan', 'feedback', 'status',

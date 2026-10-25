@@ -55,6 +55,7 @@ export function buildDefaultConfig({ portOffset = 0, personaText = '' } = {}) {
       httpUrl: `http://127.0.0.1:${3000 + portOffset}`,
       accessToken: '', httpAccessToken: '',
     },
+    localProtocols: { selectedId: '', account: '', autoStart: false, deferConnection: false },
     persona: {
       botName: '小鲸鱼', selfNickname: '',
       roleText: personaText,           // 默认 = 出厂人设全文（SPEC §17.4，逐字复刻）

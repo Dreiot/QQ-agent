@@ -1,4 +1,4 @@
-import {request,onShellEvent,onLeave} from '/panels/panel-client.js';
+import {request,onShellEvent,onLeave,contentReady} from '/panels/panel-client.js';
 import {$,clear} from '../ui.js';
 import {createIcon} from '../icons.js';
 import {installDisposableDialog} from '../dialog-lifecycle.js';
@@ -76,8 +76,8 @@ function syncRange(){for(const button of document.querySelectorAll('#usage-range
 async function load(){
   if(disposed)return;const version=++loadVersion,range=rangeControl.value;if(!lastData){metrics.setAttribute('aria-busy','true');updateText($('#status'),'正在读取用量…');}$('#status').className='muted';
   const pending=Promise.all([request('GET','/api/usage/stats',undefined,{range}),request('GET','/api/status').catch(()=>null)]);inFlight=pending;
-  try{const [data,status]=await pending;if(disposed||version!==loadVersion||range!==rangeControl.value)return;lastData=data;lastStatus=status||lastStatus;renderData(data,lastStatus);updateText($('#status'),data.rangeLabel||range);if(selected&&detailDialog?.open)void loadDetail(false);}
-  catch(error){if(!disposed&&version===loadVersion){$('#status').className='error';updateText($('#status'),`用量加载失败：${error.message||'请重试'}${lastData?'；保留上次结果。':''}`);}}
+  try{const [data,status]=await pending;if(disposed||version!==loadVersion||range!==rangeControl.value)return;lastData=data;lastStatus=status||lastStatus;renderData(data,lastStatus);updateText($('#status'),data.rangeLabel||range);if(selected&&detailDialog?.open)void loadDetail(false);void contentReady();}
+  catch(error){if(!disposed&&version===loadVersion){$('#status').className='error';updateText($('#status'),`用量加载失败：${error.message||'请重试'}${lastData?'；保留上次结果。':''}`);void contentReady();}}
   finally{if(version===loadVersion)metrics.setAttribute('aria-busy','false');if(inFlight===pending){inFlight=null;if(pendingRefresh&&!disposed){pendingRefresh=false;scheduleRefresh();}}}
 }
 function scheduleRefresh(){if(disposed)return;if(inFlight){pendingRefresh=true;return;}if(refreshTimer)return;refreshTimer=setTimeout(()=>{refreshTimer=null;void load();},160);}
@@ -133,7 +133,7 @@ function renderTools(){
   if(!toolDialog)return;const entries=Object.entries(lastData?.toolCounts||{}).map(([id,count])=>({id,count:Math.max(0,number(count))})).filter(item=>item.count>0),total=entries.reduce((sum,item)=>sum+item.count,0),max=Math.max(...entries.map(item=>item.count),1),host=toolDialog.querySelector('#tools');updateText(toolDialog.querySelector('.tool-note'),`${lastData?.rangeLabel||'当前区间'} · 共 ${tokens(total)} 次工具调用`);const signature=JSON.stringify(entries);if(host.dataset.signature===signature)return;host.dataset.signature=signature;clear(host);
   if(!entries.length){host.append(element('p','这个时间区间内还没有任何工具调用记录。','empty'));return;}
   const groups=new Map();for(const item of entries){const [name,category]=toolMeta[item.id]||[item.id,'其他'];if(!groups.has(category))groups.set(category,[]);groups.get(category).push({...item,name});}
-  const icons={发言:'chats',查看:'search',表情:'panel',记忆:'memory',联网:'community',其他:'skills'};
+  const icons={发言:'chats',查看:'search',表情:'smile',记忆:'memory',联网:'globe',其他:'skills'};
   for(const category of ['发言','查看','表情','记忆','联网','其他']){
     const items=groups.get(category);if(!items)continue;const group=element('section',undefined,'tool-category'),head=element('div',undefined,'tool-category-head'),count=items.reduce((sum,item)=>sum+item.count,0);head.append(createIcon(icons[category],{size:18}),element('h4',category),element('small',`${tokens(count)} 次 · ${(count/total*100).toFixed(0)}%`));group.append(head);
     for(const item of items.sort((a,b)=>b.count-a.count)){const row=element('div',undefined,'tool-row'),name=document.createElement('div'),track=element('span',undefined,'tool-track'),bar=document.createElement('i');name.append(element('strong',item.name),element('code',item.id));bar.style.width=`${item.count/max*100}%`;track.append(bar);row.append(name,track,element('span',`${tokens(item.count)} 次`,'tool-count'));group.append(row);}host.append(group);
@@ -143,6 +143,7 @@ function renderTools(){
 setupMetrics();for(const [id,dim] of [['days','day'],['chats','chat'],['models','model'],['providers','provider'],['sessions','session'],['hours','hour']])renderRows($('#'+id),[],dim,{loading:true});
 for(const button of document.querySelectorAll('#usage-ranges [data-range]'))button.addEventListener('click',()=>changeRange(button.dataset.range));
 rangeControl.addEventListener('change',()=>changeRange(rangeControl.value));$('#reload').addEventListener('click',()=>void load());$('#models-expand').addEventListener('click',()=>{expanded=!expanded;renderModels();});
-onShellEvent(name=>{if(name==='status'||name==='session-end')scheduleRefresh();});
-function dispose(){disposed=true;++loadVersion;++detailVersion;clearTimeout(refreshTimer);detailDialog?.close();toolDialog?.close();}
+onShellEvent((name,payload)=>{if(['hello','session-start','session-update','session-end','price-update'].includes(name)||name==='status'&&payload?.configUpdated)scheduleRefresh();});
+const visible=()=>{if(!document.hidden)scheduleRefresh();};document.addEventListener('visibilitychange',visible);
+function dispose(){document.removeEventListener('visibilitychange',visible);disposed=true;++loadVersion;++detailVersion;clearTimeout(refreshTimer);detailDialog?.close();toolDialog?.close();}
 onLeave(dispose);window.addEventListener('pagehide',dispose);syncRange();void load();

@@ -1,4 +1,5 @@
 import {button, destructiveButton, text} from '../ui.js';
+import {createAutoSave} from './auto-save.js';
 
 export function providerCredential({parent, provider, request, save, isCurrent, changed}) {
   const wrap=document.createElement('div');wrap.className='setting-field';wrap.dataset.providerCredential=provider.id;
@@ -14,15 +15,16 @@ export function providerCredential({parent, provider, request, save, isCurrent, 
     check();await save();check();
     const result=await request('POST','/api/providers/set-key',{providerId:provider.id,apiKey:value,expectedBaseUrl:provider.baseURL||provider.baseUrl});
     if(closed||!wrap.isConnected)return;
-    input.value='';clear();sync(result.hasKey);changed?.(provider.id,result.hasKey);
+    if(input.value.trim()===value)input.value='';clear();sync(result.hasKey);changed?.(provider.id,result.hasKey);
   }
-  line.append(input,button('写入',async()=>{if(!input.value.trim())throw new Error('请输入新密钥');await write(input.value.trim());}),
-    destructiveButton('清除',()=>write(''),{target:()=>wrap,clicks:3,key:()=>provider.id,canActivate:()=>!closed&&isCurrent(provider.id),impact:`将清除渠道 ${provider.displayName||provider.id} 的密钥。`}),
+  const autoSave=createAutoSave({root:wrap,dirty:()=>!!input.value.trim(),save:async()=>{if(input.value.trim())await write(input.value.trim());}});input.addEventListener('input',()=>autoSave.schedule());
+  line.append(input,
+    destructiveButton('清除',()=>{input.value='';return write('');},{target:()=>wrap,clicks:3,key:()=>provider.id,canActivate:()=>!closed&&isCurrent(provider.id),impact:`将清除渠道 ${provider.displayName||provider.id} 的密钥。`}),
     button('显示已有',async()=>{
       check();const data=await request('GET','/api/providers/key',undefined,{providerId:provider.id});
       if(closed||!wrap.isConnected||!isCurrent(provider.id))return;
       clear();text(reveal,data.apiKey||'未配置');timer=setTimeout(clear,20000);
     }));
   wrap.append(title,state,line,reveal);parent.append(wrap);
-  return()=>{closed=true;input.value='';clear();};
+  return()=>{closed=true;autoSave.dispose();input.value='';clear();};
 }

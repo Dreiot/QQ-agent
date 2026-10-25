@@ -1,1 +1,14 @@
 #app-log { min-height: 240px; max-height: calc(100vh - 130px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+#reload { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; min-height: 36px; padding: 7px; }
+.settings-save-toast {
+  position:fixed;inset:16px 20px auto auto;margin:0;padding:11px 16px;z-index:2147483647;
+  display:flex;align-items:center;gap:10px;max-width:min(460px,calc(100vw - 32px));
+  border:1px solid var(--good);border-radius:var(--radius-dialog,10px);background:var(--surface);color:var(--text);
+  box-shadow:var(--shadow-lift);font:13px/1.5 var(--font-ui,system-ui);
+}
+.settings-save-toast[hidden]{display:none!important;}
+.settings-save-toast[data-state=saved]>span:first-child{color:var(--good);}
+.settings-save-toast[data-state=saving]{border-color:var(--line);}
+.settings-save-toast[data-state=error]{border-color:var(--bad);}
+.settings-save-toast button{padding:2px 8px;min-height:28px;}
+@media(max-width:560px){#app-log{max-height:calc(100vh - 175px);}.settings-save-toast{inset:12px 16px auto 16px;max-width:none;}}

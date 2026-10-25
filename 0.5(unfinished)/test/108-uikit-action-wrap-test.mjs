@@ -60,19 +60,19 @@ try {
     await page.goto(`${base}/?token=${token}`);
     await page.locator('#nav button[data-panel=settings]').click();
     const frame = page.frameLocator('#panel-host iframe');
-    await frame.locator('#status').filter({ hasText: '配置已读取' }).waitFor();
+    await frame.locator('#settings-sidebar a[data-target=appearance]').waitFor();
     await settingsSection(frame,'uikit');
-    const presets = frame.locator('#section-uikit .setting-field.full').filter({ hasText: '配色起点' }).locator('.actions');
+    const presets = frame.locator('#section-appearance .actions').filter({has:frame.locator('button.palette-choice')});
     await presets.scrollIntoViewIfNeeded();
     const layout = await presets.evaluate(row => {
       const doc = row.ownerDocument, width = doc.documentElement.clientWidth;
-      const buttons = [...row.querySelectorAll('button')];
+      const buttons = [...row.querySelectorAll('button.palette-choice')];
       return { width, pageOverflow: Math.max(doc.body.scrollWidth, doc.documentElement.scrollWidth) - width,
-        labels: buttons.map(button => button.textContent),
+        labels: buttons.map(button => button.getAttribute('aria-label') || button.textContent),
         outside: buttons.filter(button => button.getBoundingClientRect().right > width + 1 || button.getBoundingClientRect().left < 0).map(button => button.textContent),
         rows: new Set(buttons.map(button => Math.round(button.getBoundingClientRect().top))).size,
         needsWrap:buttons.reduce((sum,button)=>sum+button.getBoundingClientRect().width,0)+Math.max(0,buttons.length-1)*Number.parseFloat(getComputedStyle(row).columnGap||'0')>row.getBoundingClientRect().width+1,
-        otherOutside: [...doc.querySelectorAll('#section-uikit button, #uikit-scheme-name, [id^="uikit-rename-"]')].filter(node => node.getBoundingClientRect().right > width + 1).map(node => node.textContent || node.id),
+        otherOutside: [...doc.querySelectorAll('#section-appearance button, #uikit-scheme-name, [id^="uikit-rename-"]')].filter(node => node.checkVisibility() && node.getBoundingClientRect().right > width + 1).map(node => node.textContent || node.id),
       };
     });
     console.log(`· ${size.width}x${size.height} component-kit layout: ${JSON.stringify(layout)}`);
@@ -93,13 +93,13 @@ try {
     for (const preset of Object.values(PRESETS)) {
       await presets.getByRole('button', { name: preset.label, exact: true }).click();
       assert.equal(await frame.locator('#field-uikit-accent').inputValue(), preset.tokens.accent);
-      await frame.locator('#status').filter({ hasText: `已套用配色：${preset.label}` }).waitFor();
+      await frame.locator(`.palette-choice[data-palette="${Object.keys(PRESETS).find(key=>PRESETS[key]===preset)}"][aria-pressed=true]`).waitFor();
       assert.equal(await frame.locator('body').evaluate(body => Math.max(body.scrollWidth, body.ownerDocument.documentElement.scrollWidth) - body.ownerDocument.documentElement.clientWidth), 0, `${preset.label} also fits after its visual style is applied`);
     }
-    await frame.locator('#uikit-scheme-name').fill(`108-${size.width}`);
-    await frame.getByRole('button', { name: '另存为自定义方案', exact: true }).click();
-    await frame.locator('#status').filter({ hasText: `已另存为「108-${size.width}」` }).waitFor();
-    const scheme = frame.locator('#section-uikit .settings-list-row').filter({ hasText: `108-${size.width}` });
+    await frame.locator('[data-appearance-group=themes] > summary').click();await frame.locator('#uikit-scheme-name').fill(`108-${size.width}`);
+    await frame.getByRole('button', { name: '主题', exact: true }).click();
+    await frame.locator('#section-appearance .settings-list-row').filter({hasText:`108-${size.width}`}).waitFor();
+    const scheme = frame.locator('#section-appearance .settings-list-row').filter({ hasText: `108-${size.width}` });
     await scheme.locator('input[id^="uikit-rename-"]').fill(`108-${size.width}-renamed`);
     // Capture the renamed scheme's save before its autosave timer can complete.
     const saved = page.waitForResponse(response => {
@@ -108,13 +108,13 @@ try {
       return Object.values((patch?.__replace__ ?? patch)?.custom ?? {}).some(scheme => scheme.name === `108-${size.width}-renamed`);
     });
     saved.catch(()=>{});await scheme.getByRole('button', { name: '重命名', exact: true }).click();
-    await frame.locator('#status').filter({ hasText: '已重命名' }).waitFor();
-    assert.equal(await frame.locator('#section-uikit .settings-list-row').filter({ hasText: `108-${size.width}-renamed` }).count(), 1);
+    
+    assert.equal(await frame.locator('#section-appearance .settings-list-row').filter({ hasText: `108-${size.width}-renamed` }).count(), 1);
     await settingsSave(frame);
     const saveResponse = await saved;
     assert.equal(saveResponse.status(), 200, 'the exact renamed scheme save succeeds');
     assert.equal(await saveResponse.finished(), null, 'the actual save response is fully received before reading persisted config');
-    await frame.locator('#status').filter({ hasText: /^已保存 · / }).waitFor();
+    
     const response = await fetch(`${base}/api/config`, { headers: { 'x-console-token': token } });
     const config = await response.json();
     assert.ok(Object.values(config.ui.uikit.custom).some(scheme => scheme.name === `108-${size.width}-renamed`));

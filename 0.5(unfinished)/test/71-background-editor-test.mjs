@@ -150,6 +150,10 @@ try {
   const frame = page.frameLocator('#panel-host iframe');
   // 切到组件库分区
   await settingsSection(frame,'uikit');
+  // Background controls now live in the visible appearance "背景" fold. Open
+  // its actual summary rather than filling a range inside a closed details.
+  const openBackground=async()=>{const fold=frame.locator('details[data-appearance-group="background"]');if(!await fold.evaluate(node=>node.open))await fold.locator(':scope > summary').click();};
+  await openBackground();
   await page.waitForTimeout(800);
   assert.ok(await frame.locator('.bg-editor').count(), '背景图编辑器未渲染');
 
@@ -165,6 +169,7 @@ try {
   // shell 文档读不到它的 contentDocument —— 用 Playwright 的 frameLocator 等待。
   await frame.locator('.bg-stage-img[src]').waitFor({ state: 'attached', timeout: 20000 });
   await page.waitForTimeout(1200);
+  await openBackground();
 
   const editor = await frame.locator('#section-uikit').evaluate((card) => {
     const stage = card.querySelector('.bg-stage');

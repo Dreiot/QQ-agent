@@ -398,4 +398,43 @@ console.log('· Invalidation handles stop rejections, and stop reports all clean
     assert.deepEqual(unhandled, []); await host.stop();
   } finally { process.off('unhandledRejection', onUnhandled); }
 }
+console.log('· A per-service connection switch closes transport without stopping other services');
+{
+  const abilities = createCapabilityRegistry({ log }), events = new Bus(log), contexts = [], listeners = new Set();
+  let transportStarts = 0, transportStops = 0, otherStops = 0, releaseStop, statuses = 0;
+  const config = { onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); } };
+  abilities.register('transport.provider', 'kernel', { create(context) { contexts.push(context); return {
+    start() { transportStarts++; }, stop() { transportStops++; return new Promise(resolve => { releaseStop = resolve; }); },
+  }; } }, { lifecycle: true });
+  abilities.register('fixture.unrelated', 'kernel', { create: () => ({ start() {}, stop() { otherStops++; } }) }, { lifecycle: true });
+  const host = createServiceHost({ capability: abilities, config, bus: events, log }); events.on('transport.status', () => { statuses++; });
+  await host.start(); const original = host.token('transport.provider'), other = host.token('fixture.unrelated'); assert.ok(original); assert.ok(other);
+  const stopping = host.setEnabled('transport.provider', false);
+  assert.equal(host.get('transport.provider'), undefined); assert.equal(host.token('transport.provider'), null, 'disable fences access synchronously');
+  contexts[0].emit('transport.status', { connected: true }); assert.equal(statuses, 0, 'old transport cannot publish while close is pending');
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(transportStops, 1); assert.equal(otherStops, 0); assert.equal(host.token('fixture.unrelated'), other);
+  releaseStop(); await stopping; for (const listener of listeners) listener(); await host.idle(); assert.equal(transportStarts, 1, 'configuration refresh cannot reconnect a disabled transport');
+  await host.setEnabled('transport.provider', true); assert.equal(transportStarts, 2); assert.notEqual(host.token('transport.provider'), original); assert.equal(host.token('fixture.unrelated'), other);
+  const finalStop = host.stop(); await new Promise(resolve => setImmediate(resolve)); releaseStop(); await finalStop; assert.equal(otherStops, 1); assert.equal(transportStops, 2);
+}
+console.log('· A disabled connection stays closed at boot and cancels an unresolved transport start');
+{
+  const abilities = createCapabilityRegistry({ log }); let starts = 0, stops = 0, entered, release, oldContext;
+  abilities.register('transport.provider', 'kernel', { create(context) { oldContext = context; return {
+    start() { starts++; entered?.(); return new Promise(resolve => { release = resolve; }); }, stop() { stops++; },
+  }; } }, { lifecycle: true });
+  const host = createServiceHost({ capability: abilities, config: {}, log });
+  await host.setEnabled('transport.provider', false); await host.start(); assert.equal(starts, 0); assert.equal(host.get('transport.provider'), undefined);
+  const waiting = new Promise(resolve => { entered = resolve; }); const enabling = host.setEnabled('transport.provider', true); await waiting;
+  await host.setEnabled('transport.provider', false); await enabling; assert.equal(stops, 1); assert.equal(oldContext.signal.aborted, true); assert.equal(host.get('transport.provider'), undefined);
+  release(); await new Promise(resolve => setImmediate(resolve)); assert.equal(starts, 1); assert.equal(stops, 1); await host.stop();
+}
+console.log('· Per-service switch reports a real close failure while retaining its access fence');
+{
+  const abilities = createCapabilityRegistry({ log });
+  abilities.register('transport.provider', 'kernel', { create: () => ({ start() {}, stop() { throw new Error('fixture close failure'); } }) }, { lifecycle: true });
+  const host = createServiceHost({ capability: abilities, config: {}, log }); await host.start();
+  await assert.rejects(host.setEnabled('transport.provider', false), /未能完全停止/); assert.equal(host.get('transport.provider'), undefined); assert.equal(host.token('transport.provider'), null);
+  await assert.rejects(host.stop(), /fixture close failure/);
+}
 console.log('✓ 85 service host lifecycle and permission refresh boundaries pass');

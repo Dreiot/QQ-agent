@@ -31,7 +31,7 @@ try{
     await card.evaluate(n=>{const detail=n.closest('#detail');detail.scrollTop+=n.getBoundingClientRect().top-detail.getBoundingClientRect().top-30;});
     await card.evaluate(n=>{window.__card253=n;window.__text253=n.querySelector('pre');window.__meta253=document.querySelector('.session-meta');window.__body253=n.parentElement;window.__top253=n.closest('#detail').scrollTop;});
     const snapshot=()=>card.evaluate(n=>({card:n===window.__card253,text:n.querySelector('pre')===window.__text253,meta:document.querySelector('.session-meta')===window.__meta253,body:n.parentElement===window.__body253,open:n.open,top:n.closest('#detail').scrollTop,detailAnimation:document.querySelector('#detail').getAnimations().some(a=>a.playState==='running')}));
-    const readBefore=reads;await wait(()=>Promise.resolve(reads>=readBefore+2));const quiet=await snapshot();
+    const readBefore=reads;f.kernel.httpServer.broadcast('hello',{});await wait(()=>Promise.resolve(reads>=readBefore+1));f.kernel.httpServer.broadcast('hello',{});await wait(()=>Promise.resolve(reads>=readBefore+2));const quiet=await snapshot();
     assert.ok(quiet.card&&quiet.text&&quiet.meta&&quiet.body&&quiet.open);assert.equal(quiet.detailAnimation,false);assert.ok(Math.abs(quiet.top-await card.evaluate(()=>window.__top253))<2);assert.equal(await stableRows(),true);
     events.push('selection and repeated quiet reconciliation retain nodes, folds and scroll');
     // Record the last model-message node and grow that exact message in place.

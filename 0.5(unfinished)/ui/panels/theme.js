@@ -15,7 +15,8 @@
 //
 // 契约不变：只写 CSS 变量与少量布局 data 属性，不新增组件样式。
 
-const KEY = 'qq-agent.theme.v1';
+import {accountStorageKey,accountResourceUrl} from './account-scope.js';
+const KEY = accountStorageKey('qq-agent.theme.v1');
 
 const colorTransitionGates = new WeakMap();
 const COLOR_DURATION = '--theme-color-duration';
@@ -85,6 +86,104 @@ export const DARK_BASE = {
 
 /** 外观模式白名单；保留既有配置标识，配色由颜色令牌控制。 */
 export const STYLE_MODES = new Set(['endfield', 'classic', 'signal', 'flux']);
+
+/** Shared settings contract. The editor, validator and CSS painter use one vocabulary. */
+export const PERSONALIZATION_GROUPS = Object.freeze([
+  { id: 'typography', label: '文字' }, { id: 'shapes', label: '轮廓与阴影' },
+  { id: 'controls', label: '按钮与输入' }, { id: 'navigation', label: '导航与布局' },
+  { id: 'data', label: '卡片与列表' }, { id: 'dialogs', label: '弹窗' },
+  { id: 'interaction', label: '交互状态' }, { id: 'ripple', label: '按压波纹' },
+  { id: 'brand', label: '左上角图标' }, { id: 'motion', label: '图标与动效' },
+]);
+const range = (key, group, label, value, min, max, step = 1, unit = 'px', extra = {}) =>
+  ({ key, group, label, type: 'range', default: value, min, max, step, unit, ...extra });
+const choice = (key, group, label, value, options) => ({ key, group, label, type: 'select', default: value, options });
+export const PERSONALIZATION_FIELDS = Object.freeze([
+  choice('fontFamily', 'typography', '字体', 'system', [{value:'system',label:'系统默认'},{value:'humanist',label:'圆润无衬线'},{value:'serif',label:'衬线'},{value:'mono',label:'等宽'}]),
+  range('fontSize', 'typography', '正文字号', 13, 11, 18),
+  range('fontWeight', 'typography', '正文字重', 400, 300, 700, 100, ''),
+  range('headingWeight', 'typography', '标题字重', 600, 400, 800, 100, ''),
+  range('headingScale', 'typography', '标题比例', 1, .85, 1.35, .05, '×'),
+  range('lineHeight', 'typography', '文字行距', 1.65, 1.25, 2.1, .05, '×'),
+  range('letterSpacing', 'typography', '字间距', 0, -.3, 1.5, .1),
+  range('codeFontSize', 'typography', '代码字号', 11, 10, 18),
+  ...[['radiusButton','按钮圆角'],['radiusInput','输入框圆角'],['radiusCard','卡片圆角'],['radiusDialog','弹窗圆角']].map(([key,label]) => range(key,'shapes',label,-1,-1,40,1,'px',{autoValue:-1,autoLabel:'跟随圆角基准'})),
+  choice('buttonShape', 'shapes', '主按钮轮廓', 'theme', [{value:'theme',label:'跟随主题'},{value:'round',label:'圆角'},{value:'square',label:'直角'}]),
+  range('borderWidth', 'shapes', '边框粗细', 1, 0, 3, .5),
+  range('shadowStrength', 'shapes', '阴影深度', 1, 0, 2, .1, '×'),
+  range('shadowBlur', 'shapes', '阴影柔化', 32, 0, 64),
+  range('controlHeight', 'controls', '控件最小高度', 36, 28, 56),
+  range('controlFontSize', 'controls', '按钮字号', 12, 11, 18),
+  range('controlFontWeight', 'controls', '按钮字重', 600, 400, 800, 100, ''),
+  range('inputFontSize', 'controls', '输入框字号', 13, 11, 18),
+  range('choiceSize', 'controls', '勾选框与单选框大小', 15, 12, 24),
+  range('rangeHeight', 'controls', '滑条点击高度', 20, 16, 36),
+  range('buttonPaddingX', 'controls', '按钮左右留白', 12, 6, 30),
+  range('buttonPaddingY', 'controls', '按钮上下留白', 7, 4, 18),
+  range('inputPaddingX', 'controls', '输入框左右留白', 12, 6, 28),
+  range('inputPaddingY', 'controls', '输入框上下留白', 7, 4, 18),
+  range('sidebarWidth', 'navigation', '主导航宽度', 224, 180, 340),
+  {key:'rail',group:'navigation',label:'主导航底色',type:'color',default:'',automatic:true,autoLabel:'跟随页面底色'},
+  range('settingsSidebarWidth', 'navigation', '设置导航宽度', 170, 140, 280),
+  range('navigationFontSize', 'navigation', '导航字号', 13, 11, 18),
+  range('navigationHeight', 'navigation', '导航项高度', 46, 36, 68),
+  range('navigationIconScale', 'navigation', '导航图标比例', 1, .8, 1.35, .05, '×'),
+  range('navigationGap', 'navigation', '导航项间距', 4, 2, 16),
+  range('topbarHeight', 'navigation', '顶栏高度', 44, 36, 72),
+  range('pagePadding', 'navigation', '页面留白', 16, 8, 36),
+  range('cardPadding', 'data', '卡片留白', 16, 8, 36),
+  range('listGap', 'data', '列表间距', 12, 2, 24),
+  range('tablePaddingX', 'data', '表格左右留白', 12, 4, 28),
+  range('tablePaddingY', 'data', '表格上下留白', 12, 4, 24),
+  range('tableFontSize', 'data', '表格字号', 12, 11, 18),
+  range('scrollbarWidth', 'data', '滚动条宽度', 5, 3, 12),
+  range('dialogWidth', 'dialogs', '弹窗基准宽度', 560, 400, 1200, 20),
+  range('dialogPadding', 'dialogs', '弹窗留白', 24, 12, 40),
+  range('overlayOpacity', 'dialogs', '遮罩深度', .5, 0, .9, .05, '%', {displayScale:100}),
+  range('backdropBlur', 'dialogs', '遮罩模糊', 0, 0, 16),
+  ...[['hoverColor','悬停颜色'],['selectedColor','选中颜色'],['focusColor','聚焦颜色']].map(([key,label])=>({key,group:'interaction',label,type:'color',default:'',automatic:true,autoLabel:'跟随强调色'})),
+  range('hoverTint', 'interaction', '悬停底色浓度', 8, 0, 30, 1, '%'),
+  range('selectedTint', 'interaction', '选中底色浓度', 10, 0, 40, 1, '%'),
+  range('focusWidth', 'interaction', '聚焦轮廓粗细', 2, 1, 4, .5),
+  range('hoverLift', 'interaction', '按钮悬停浮起', 1, 0, 4, .5),
+  range('disabledOpacity', 'interaction', '禁用控件可见度', .45, .25, .8, .05, '%',{displayScale:100}),
+  {key:'rippleEnabled',group:'ripple',label:'按压波纹',type:'boolean',default:true},
+  {key:'rippleColor',group:'ripple',label:'波纹颜色',type:'color',default:'',automatic:true,autoLabel:'跟随主题'},
+  range('rippleSpread', 'ripple', '扩散范围', 8, 0, 32),
+  range('rippleSpeed', 'ripple', '波纹速度', 1, .25, 3, .05, '×'),
+  range('brandIconSize', 'brand', '左上角图标大小', 36, 20, 64),
+  range('brandMotionSpeed', 'brand', '左上角图标速度', 1, .25, 2, .05, '×', {hint:'1× · 每秒 8 次'}),
+  range('iconSize', 'motion', '图标基准大小', 20, 14, 36),
+  range('iconStroke', 'motion', '图标线条粗细', 1.8, .8, 3, .1),
+  range('iconMotionScale', 'motion', '图标动作幅度', 1, 0, 1.8, .1, '×'),
+  range('iconMotionSpeed', 'motion', '图标播放速度', 1, .5, 2, .1, '×'),
+  {key:'iconMotionEnabled',group:'motion',label:'图标动效',type:'boolean',default:true},
+  range('motionDuration', 'motion', '界面过渡时长', 1, .4, 2, .1, '×'),
+  range('motionScale', 'motion', '界面动作幅度', 1, 0, 2, .1, '×'),
+  {key:'interfaceMotionEnabled',group:'motion',label:'界面动效',type:'boolean',default:true},
+].map(Object.freeze));
+const PERSONALIZATION_DEFAULTS = Object.fromEntries(PERSONALIZATION_FIELDS.map(field => [field.key, field.default]));
+const FONT_FAMILIES = Object.freeze({
+  system: "'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', system-ui, sans-serif",
+  humanist: "'Aptos', 'Trebuchet MS', 'Microsoft YaHei UI', 'PingFang SC', sans-serif",
+  serif: "'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', Georgia, serif",
+  mono: "'Cascadia Mono', 'SFMono-Regular', Consolas, 'Microsoft YaHei UI', monospace",
+});
+
+/** Accept only bounded numbers, named font stacks, booleans and hex paints. */
+export function normalizePersonalization(input = {}) {
+  const out = {};
+  for (const field of PERSONALIZATION_FIELDS) {
+    const value = input?.[field.key];
+    if (field.type === 'range') {
+      const number = value === '' || value == null || typeof value === 'boolean' ? NaN : Number(value);
+      out[field.key] = Number.isFinite(number) ? Math.min(field.max, Math.max(field.min, number)) : field.default;
+    } else if (field.type === 'boolean') out[field.key] = typeof value === 'boolean' ? value : field.default;
+    else if (field.type === 'select') out[field.key] = field.options.some(option => option.value === value) ? value : field.default;
+    else out[field.key] = typeof value === 'string' && /^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(value) ? value : field.default;
+  }
+  return out;
+}
 
 /** 成型风格预设：只作为配色起点（套用后仍需"另存为"才成为自定义方案）。 */
 export const PRESETS = {
@@ -190,6 +289,7 @@ export const PRESETS = {
 export const DEFAULT_THEME = {
   preset: 'dark',
   ...DARK_BASE,
+  ...PERSONALIZATION_DEFAULTS,
   // 圆角基准（px）：6 推导出 sm 4 / md 6 / lg 8。
   // 默认使用小圆角，切角主按钮另走 clip-path；尺寸由配置决定。
   // --r-*，组件库的「圆角基准」滑条才能一直生效。
@@ -205,7 +305,7 @@ export const DEFAULT_THEME = {
 /** 参与方案的配色/背景键。 */
 const SCHEMA_KEYS = ['bg', 'surface', 'surface2', 'surface3', 'text', 'muted', 'faint', 'accent', 'accent2', 'good', 'warn', 'bad', 'line', 'lineSoft', 'accentInk', 'bgImage', 'bgOpacity', 'bgBlur', 'bgFit', 'bgRotate', 'bgZoom', 'bgOffsetX', 'bgOffsetY'];
 /** 形状/布局键（也属于一套完整方案）。 */
-const LAYOUT_KEYS = ['radius', 'density', 'sidebar', 'btnAlign', 'styleMode'];
+const LAYOUT_KEYS = ['radius', 'density', 'sidebar', 'btnAlign', 'styleMode', ...PERSONALIZATION_FIELDS.map(field => field.key)];
 
 /** bgZoom is the width of a 16:9 selection in the original 16:9 image plane. */
 export function normalizeBackgroundCrop(input = {}) {
@@ -227,6 +327,7 @@ export function backgroundPaint(fit) {
 /** 合并出厂默认 + 用户覆盖，保证缺字段也有值。 */
 export function normalizeTheme(input) {
   const t = { ...DEFAULT_THEME, ...(input ?? {}) };
+  Object.assign(t, normalizePersonalization(t));
   if (t.gradient === undefined || t.gradient === null) t.gradient = false;
   return t;
 }
@@ -236,9 +337,10 @@ export function normalizeScheme(input, base = DEFAULT_THEME) {
   const out = { ...base };
   for (const k of [...SCHEMA_KEYS, ...LAYOUT_KEYS, 'gradient']) {
     const v = input?.[k];
-    if (v !== undefined && v !== null && v !== '') out[k] = v;
+    if (v !== undefined && v !== null && (v !== '' || PERSONALIZATION_FIELDS.some(field => field.key === k && field.automatic))) out[k] = v;
   }
   if (typeof input?.gradient === 'boolean') out.gradient = input.gradient;
+  Object.assign(out, normalizePersonalization(out));
   return out;
 }
 
@@ -363,10 +465,10 @@ export function safeBgUrl(raw) {
   if (!v) return '';
   if (/["'\\;()<>[\]{}]/.test(v)) return '';
   if (/^\/api\/uikit\/background\/[A-Za-z0-9._-]+$/.test(v)) {
-    return v.replace('/api/uikit/background/', '/ui/backgrounds/');
+    return accountResourceUrl(v);
   }
-  if (/^\/ui\/backgrounds\/[A-Za-z0-9._-]+$/.test(v)) return v;
-  if (/^(https?:\/\/|\/api\/)/i.test(v)) return v;
+  if (/^\/(?:accounts\/[a-f0-9-]{36}\/)?ui\/backgrounds\/[A-Za-z0-9._-]+$/i.test(v)) return accountResourceUrl(v);
+  if (/^(https?:\/\/|\/api\/)/i.test(v)) return accountResourceUrl(v);
   return '';
 }
 
@@ -405,6 +507,7 @@ export function publicPanelTheme(input) {
   out.styleMode = STYLE_MODES.has(theme.styleMode) ? theme.styleMode : DEFAULT_THEME.styleMode;
   out.gradient = theme.gradient === true;
   out.preset = Object.hasOwn(PRESETS, theme.preset) ? theme.preset : DEFAULT_THEME.preset;
+  Object.assign(out, normalizePersonalization(theme));
   return out;
 }
 
@@ -449,7 +552,7 @@ export function applyTheme(t) {
   // shell 与 panels 历史上是两套变量名（同名但有个别名差异）。
   // 这里把别名一并写掉，一套 token 覆盖两边，避免"面板换了皮肤、外壳没换"。
   s.setProperty('--canvas', theme.bg);
-  s.setProperty('--rail', theme.rail ?? theme.bg);        // 侧栏：与主背景同色，靠描边区分
+  s.setProperty('--rail', theme.rail || theme.bg);        // 侧栏默认与主背景同色
   s.setProperty('--surface-raised', theme.surface3);
   s.setProperty('--ink', theme.text);
   s.setProperty('--accent-ink', readableAccentInk(theme.accent, theme.accentInk, theme.gradient ? theme.accent2 : theme.accent));
@@ -465,10 +568,61 @@ export function applyTheme(t) {
   s.setProperty('--r-pill', '999px');
 
   // 间距：按密度倍率缩放（不用 calc，直接算成具体值，避免嵌套变量）
-  const d = Number(theme.density) || 1;
+  const d = Number.isFinite(Number(theme.density)) ? Math.min(1.4,Math.max(.7,Number(theme.density))) : 1;
   for (const [k, base] of Object.entries(SPACING)) {
     s.setProperty(`--sp-${k}`, `${Math.round(base * d)}px`);
   }
+
+  // All editable component tokens are painted in both documents. Keep numeric
+  // values bounded before interpolation; free-form CSS never crosses the RPC.
+  const p = normalizePersonalization(theme);
+  const put = (name, value, unit = '') => s.setProperty(name, `${value}${unit}`);
+  put('--density', d);
+  s.setProperty('--font-sans', FONT_FAMILIES[p.fontFamily]);
+  s.setProperty('--font-display', p.fontFamily === 'system' ? "'Bahnschrift', 'Aptos Narrow', 'Arial Narrow', var(--font-sans)" : FONT_FAMILIES[p.fontFamily]);
+  for (const [name,key,unit] of [
+    ['--font-size','fontSize','px'], ['--font-weight','fontWeight',''], ['--heading-weight','headingWeight',''],
+    ['--heading-scale','headingScale',''], ['--line-height','lineHeight',''], ['--letter-spacing','letterSpacing','px'], ['--code-font-size','codeFontSize','px'],
+    ['--border-width','borderWidth','px'], ['--control-height','controlHeight','px'], ['--control-font-size','controlFontSize','px'], ['--control-font-weight','controlFontWeight',''], ['--input-font-size','inputFontSize','px'], ['--choice-size','choiceSize','px'], ['--range-height','rangeHeight','px'],
+    ['--button-padding-x','buttonPaddingX','px'], ['--button-padding-y','buttonPaddingY','px'], ['--input-padding-x','inputPaddingX','px'], ['--input-padding-y','inputPaddingY','px'],
+    ['--sidebar-width','sidebarWidth','px'], ['--settings-sidebar-width','settingsSidebarWidth','px'], ['--navigation-font-size','navigationFontSize','px'],
+    ['--navigation-height','navigationHeight','px'], ['--navigation-icon-scale','navigationIconScale',''], ['--navigation-gap','navigationGap','px'],
+    ['--topbar-height','topbarHeight','px'], ['--page-padding','pagePadding','px'], ['--card-padding','cardPadding','px'], ['--list-gap','listGap','px'],
+    ['--table-padding-x','tablePaddingX','px'], ['--table-padding-y','tablePaddingY','px'], ['--table-font-size','tableFontSize','px'], ['--scrollbar-width','scrollbarWidth','px'],
+    ['--dialog-width','dialogWidth','px'], ['--dialog-padding','dialogPadding','px'], ['--overlay-opacity','overlayOpacity',''], ['--backdrop-blur','backdropBlur','px'],
+    ['--focus-width','focusWidth','px'], ['--disabled-opacity','disabledOpacity',''],
+    ['--icon-size','iconSize','px'], ['--theme-icon-size','iconSize','px'], ['--icon-stroke','iconStroke',''],
+    ['--icon-motion-scale','iconMotionScale',''], ['--icon-motion-speed','iconMotionSpeed',''],
+    ['--brand-icon-size','brandIconSize','px'], ['--brand-motion-speed','brandMotionSpeed',''],
+    ['--ripple-spread','rippleSpread','px'], ['--ripple-speed','rippleSpeed',''],
+  ]) put(name, p[key], unit);
+  s.setProperty('--ripple-color', p.rippleColor);
+  put('--type-scale', p.fontSize / 13);
+  put('--navigation-icon-slot', Math.max(28, p.iconSize * 1.4 * p.navigationIconScale), 'px');
+  put('--brand-icon-slot', Math.max(45, p.brandIconSize + 9), 'px');
+  const smallRadius = r === 0 ? 0 : Math.max(2, Math.round(r * .7));
+  const radii = { button:p.radiusButton, input:p.radiusInput, card:p.radiusCard, dialog:p.radiusDialog };
+  for (const [kind,value] of Object.entries(radii)) put(`--radius-${kind}`, value < 0 ? (kind === 'button' || kind === 'input' ? smallRadius : r) : value, 'px');
+  const cutButton = p.buttonShape === 'theme' && theme.styleMode === 'endfield';
+  s.setProperty('--button-primary-radius', p.buttonShape === 'square' || cutButton ? '0px' : 'var(--radius-button)');
+  s.setProperty('--button-clip-path', cutButton ? 'polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))' : 'none');
+  s.setProperty('--shadow-lift', `0 12px ${p.shadowBlur}px rgb(0 0 0 / ${Math.min(.5, .125 * p.shadowStrength)})`);
+  const hover = p.hoverColor || theme.accent, selected = p.selectedColor || theme.accent;
+  s.setProperty('--hover-color', hover);
+  s.setProperty('--selected-color', selected);
+  s.setProperty('--focus', p.focusColor || theme.accent);
+  s.setProperty('--hover-soft', `color-mix(in srgb, ${hover} ${p.hoverTint}%, transparent)`);
+  s.setProperty('--hover-surface', `color-mix(in srgb, ${hover} ${p.hoverTint}%, var(--surface-2))`);
+  s.setProperty('--accent-soft', `color-mix(in srgb, ${selected} ${p.selectedTint}%, transparent)`);
+  s.setProperty('--selected-surface', `color-mix(in srgb, ${selected} ${p.selectedTint}%, var(--surface))`);
+  s.setProperty('--accent-line', `color-mix(in srgb, ${selected} 50%, var(--line))`);
+  const motionFactor = p.interfaceMotionEnabled ? p.motionDuration : 0;
+  const motionScale = p.interfaceMotionEnabled ? p.motionScale : 0;
+  put('--motion-duration-factor', motionFactor);
+  put('--motion-scale', motionScale);
+  for (const [name,value] of [['--motion-fast',120],['--motion-base',220],['--motion-slow',380],['--rail-motion-duration',320]]) put(name, value * motionFactor, 'ms');
+  put('--hover-lift', p.hoverLift * motionScale, 'px');
+  put('--press-scale', 1 - .015 * motionScale);
 
   // 渐变开关：关闭时 accent2 回落到 accent，避免半途变色
   s.setProperty('--accent-grad', theme.gradient
@@ -514,6 +668,21 @@ export function applyTheme(t) {
     // 面板侧不画背景图（只有 shell 画），否则 shell + 每个 iframe 各一层会叠成两层。
     // panels/common.css 消费这个属性把 body::before 关掉。
     body.dataset.bgOwner = 'shell';
+    body.dataset.iconMotion = p.iconMotionEnabled ? 'on' : 'off';
+    body.dataset.rippleMotion = p.rippleEnabled ? 'on' : 'off';
+    body.dataset.interfaceMotion = p.interfaceMotionEnabled ? 'on' : 'off';
+    // Page-specific compact controls keep their established defaults. Only an
+    // explicit user adjustment overrides a page's local size or shape rule.
+    const overrides = {
+      buttonSize:['controlFontSize'], buttonWeight:['controlFontWeight'], inputSize:['inputFontSize'], controlHeight:['controlHeight'],
+      buttonPadding:['buttonPaddingX','buttonPaddingY'], inputPadding:['inputPaddingX','inputPaddingY'],
+      buttonRadius:['radiusButton','buttonShape'], inputRadius:['radiusInput'], cardRadius:['radiusCard'], dialogRadius:['radiusDialog'],
+      borders:['borderWidth'], cardPadding:['cardPadding'], listGap:['listGap'], tableSize:['tableFontSize'], tablePadding:['tablePaddingX','tablePaddingY'],
+      dialogWidth:['dialogWidth'], dialogPadding:['dialogPadding'], choiceSize:['choiceSize'], rangeHeight:['rangeHeight'],
+      codeSize:['codeFontSize'], scrollbarWidth:['scrollbarWidth'], disabledOpacity:['disabledOpacity'],
+      statePaint:['hoverColor','selectedColor','hoverTint','selectedTint'],
+    };
+    for(const [name,keys] of Object.entries(overrides))body.dataset[`custom${name[0].toUpperCase()+name.slice(1)}`]=keys.some(key=>p[key]!==PERSONALIZATION_DEFAULTS[key])?'on':'off';
   }
   return theme;
 }

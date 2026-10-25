@@ -1,5 +1,6 @@
-import { createIcon } from '../icons.js';
+import { createIcon,ICON_NAMES } from '../icons.js';
 import { bindDestructiveAction } from '../destructive-action.js';
+import {installDisposableDialog} from '../dialog-lifecycle.js';
 
 let previewSequence = 0;
 
@@ -16,22 +17,22 @@ export function renderComponentPreview(parent) {
   const gallery = node('section', 'setting-field full component-preview');
   gallery.setAttribute('aria-label', '组件外观预览');
   const header = node('div', 'component-preview-head');
-  const title = node('h4', '', '组件外观预览');
-  const caption = node('p', 'field-hint', '示例控件只用于预览外观，不会保存配置或执行实际操作。');
+  const title = node('h4', '', '实时预览');
+  const caption = node('p', 'field-hint', '仅示例');caption.title='此处的操作只预览控件外观';
   header.append(title, caption);
 
   const buttons = node('div', 'component-preview-actions actions');
   buttons.setAttribute('role', 'group');
   buttons.setAttribute('aria-label', '按钮示例');
-  const feedback = node('output', 'component-preview-feedback');
+  const feedback = node('output', 'component-preview-feedback visually-hidden');
   feedback.setAttribute('role', 'status');
   feedback.textContent = '0 次示例交互';
   let presses = 0;
   for (const [label, kind, icon] of [
     ['主按钮', 'primary', 'check'],
     ['次按钮', '', 'refresh'],
-    ['危险按钮', 'danger', 'archive'],
-    ['禁用按钮', '', 'plugins'],
+    ['危险按钮', 'danger', 'trash'],
+    ['禁用按钮', '', 'check'],
   ]) {
     const control = node('button', kind);
     control.type = 'button';
@@ -49,10 +50,7 @@ export function renderComponentPreview(parent) {
   const checkLabel = node('label', 'component-preview-check');
   const check = node('input');
   check.type = 'checkbox'; check.checked = true;
-  const checkedState = node('span', '', '示例开关 · 开启');
-  check.addEventListener('change', () => {
-    checkedState.textContent = `示例开关 · ${check.checked ? '开启' : '关闭'}`;
-  });
+  const checkedState = node('span', '', '示例开关');
   checkLabel.append(check, checkedState);
 
   const rangeLabel = node('label', 'setting-field');
@@ -81,9 +79,9 @@ export function renderComponentPreview(parent) {
 
   const specimens = node('div', 'component-preview-specimens');
   const type = node('div', 'component-preview-type');
-  type.append(node('small', 'eyebrow', 'TYPE / READOUT'));
+  type.append(node('small', 'component-preview-caption', '文字与数字'));
   const specimenTitle = node('div', 'component-preview-type-title', '系统已就绪');
-  type.append(specimenTitle, node('span', 'component-preview-digits', '0123456789 / 64.00%'));
+  type.append(specimenTitle, node('span', 'component-preview-digits', '128.00 · 64%'));
   input.addEventListener('input', () => { specimenTitle.textContent = input.value || '系统已就绪'; });
 
   const indicators = node('div', 'component-preview-indicators');
@@ -96,12 +94,17 @@ export function renderComponentPreview(parent) {
   for (const [name, label] of [['plugins', '扩展'], ['activity', '运行'], ['archive', '存档'], ['refresh', '刷新'], ['check', '确认']]) {
     const sample = node('span', 'component-preview-icon');
     sample.title = label;
-    sample.append(createIcon(name), node('small', '', label));
+    sample.setAttribute('aria-label',label);sample.append(createIcon(name));
     icons.append(sample);
   }
   indicators.append(badges, icons);
   specimens.append(type, indicators);
-  gallery.append(header, buttons, feedback, samples, specimens);
+  const previewDialog=node('button','','预览弹窗');previewDialog.type='button';previewDialog.prepend(createIcon('panel',{size:16}));previewDialog.addEventListener('click',()=>{
+    const dialog=node('dialog','component-sample-dialog'),heading=node('h3','','弹窗预览'),body=node('div','card','示例内容'),close=node('button','','完成');close.type='button';close.addEventListener('click',()=>dialog.close());dialog.append(heading,body,close);installDisposableDialog(dialog);document.body.append(dialog);dialog.showModal();
+  });buttons.append(previewDialog);
+  const browser=node('details','component-icon-browser'),summary=node('summary','','图标一览'),grid=node('div','component-icon-grid');grid.setAttribute('role','group');grid.setAttribute('aria-label','全部图标预览');
+  for(const name of ICON_NAMES){const pick=node('button');pick.type='button';pick.title=name;pick.setAttribute('aria-label',`预览图标 ${name}`);pick.setAttribute('aria-pressed','false');pick.append(createIcon(name));pick.addEventListener('click',()=>{for(const item of grid.children){item.setAttribute('aria-pressed',String(item===pick));item.dataset.iconActive=String(item===pick);}});grid.append(pick);}
+  browser.append(summary,grid);gallery.append(header, specimens, buttons, feedback, samples,browser);
   parent.append(gallery);
   return gallery;
 }

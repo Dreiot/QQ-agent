@@ -43,6 +43,7 @@ async function runHooks(hooks, payload, log) {
   return results;
 }
 
+let generationSequence=0;
 /**
  * 跑一次 agent 循环。
  * @returns { sent, rounds, usage, finishReason, messages, error }
@@ -50,7 +51,7 @@ async function runHooks(hooks, payload, log) {
 export async function runAgent({
   session, systemPrompt, userPrompt, tools, execContext,
   cfg, log = console, callLLM = null, llmInvoker = null, capabilities = null, components = null, lifecycle = null,
-  invokeTool, hooksOf = () => [], signal = null, onRound = null,
+  invokeTool, hooksOf = () => [], signal = null, onRound = null, onStream = null,
   skipBeforeContext = false, triggerEntries = [],
 } = {}) {
   const doCallLLM = callLLM ?? llmInvoker ?? components?.['llm.complete'] ?? chatCompletionWithRetry;
@@ -141,12 +142,23 @@ export async function runAgent({
       const tracksRequests = doCallLLM === chatCompletionWithRetry;
       let requests = 0;
       if (!tracksRequests) usage.calls += 1; // 注入调用仍按一次逻辑请求兼容；内置链按实际 HTTP 尝试计费。
-      generation = beginOperation('generation');publish();
+      let streamAttempt=0;
+      const streamKey=`${session.id}:${Date.now()}:${++generationSequence}`;
+      generation = beginOperation('generation',{streamId:`${streamKey}:0`,streamAttempt:0,revision:0,content:'',reasoning:''});publish();
       if (canceled()) break;
       res = await doCallLLM({ messages, tools: toolDefs, cfg, signal, capabilities, log, components, lifecycle, onRequest: () => {
         if (tracksRequests || requests > 0) usage.calls += 1;
         requests++;
         publish();
+      }, onDelta: delta => {
+        if(signal?.aborted||generation.step.state!=='running')return;
+        const step=generation.step;
+        if(delta.reset){step.streamId=`${streamKey}:${++streamAttempt}`;step.streamAttempt=streamAttempt;step.revision=0;step.content='';step.reasoning='';}
+        const fromRevision=step.revision;
+        step.content+=String(delta.content||'');step.reasoning+=String(delta.reasoning||'');step.revision++;
+        const sample=generation.sample();
+        if(onStream)onStream({step:sample,delta:{reset:!!delta.reset,content:String(delta.content||''),reasoning:String(delta.reasoning||''),fromRevision,revision:step.revision}});
+        else publish();
       } }, 2);
       generationDurationMs = generation.finish('completed').elapsedMs;publish();
     } catch (err) {
@@ -168,7 +180,10 @@ export async function runAgent({
     session.reasoning = res.reasoning ?? session.reasoning;
     const raw = res.raw ?? (res.usage ? { usage: res.usage } : undefined);
     const recordResponse = (message = res.message ?? {}) => {
-      const entry = { role: 'assistant', ...message };
+      // Tool/inline/rescue paths replace content and tool_calls. Keep the final
+      // reasoning for both the trace and providers that require it next round.
+      const reasoning = res.message?.reasoning_content ?? res.reasoning;
+      const entry = { role: 'assistant', ...(typeof reasoning === 'string' ? { reasoning_content: reasoning } : {}), ...message };
       messages.push(entry);
       metadata.set(entry, { ...(raw ? { raw } : {}), generationDurationMs, generationStartedAt: generation.step.startedAt, generationState: generation.step.state });
       if (operation === generation) operation = null;

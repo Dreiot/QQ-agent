@@ -4,6 +4,8 @@
 .head > .actions { max-width: 670px; }
 main > p.muted { max-width: 100ch; margin: 4px 0 8px; font-size: 12px; line-height: 1.5; }
 main > p.muted:empty { margin: 0; }
+.community-links { display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 20px; }
+.community-links button { color:var(--muted);font-weight:400; }
 main > .card { min-width: 0; padding: 24px; }
 main > .card > h3 { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }

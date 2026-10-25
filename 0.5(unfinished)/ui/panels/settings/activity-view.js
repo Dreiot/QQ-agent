@@ -3,6 +3,7 @@ import {groupCandidates,normalizeQQList} from './list-choice.js';
 import {allChatsAllowed} from '../chat-access.js';
 import {ActivityDraft} from './activity-draft.js';
 import {createConditionalMotion} from './conditional-motion.js';
+import {createAutoSave} from './auto-save.js';
 let lastGroup='';
 const number=(value,fallback)=>Number.isFinite(Number(value))&&value!=null?Math.max(0,Math.min(100,Math.round(Number(value)*100)/100)):fallback;
 // Presentation follows the selected 0.5 wake policy's actual probability and
@@ -20,7 +21,7 @@ export function mountActivityView({read:baseRead,draft:retainedDraft,commit,onCh
   const groups=node('div','activity-group-area'),groupField=node('div','activity-group-field'),choices=node('div','activity-group-buttons'),clearRow=node('div','activity-clear-row');
   const groupViewport=node('div','activity-group-viewport');groupViewport.append(groups);
   readout.append(big,note);wrap.append(bar,readout,target);groupField.append(node('label','','未单独配置的群聊和私聊使用全局设置'),choices);groups.append(groupField,clearRow);host.append(wrap,groupViewport);
-  for(const[left,width,label]of [[0,10,'1'],[10,10,'2'],[20,70,'3 · 随机概率线性'],[90,10,'4']]){const band=node('div','activity-tier-band',label);band.style.left=`${left}%`;band.style.width=`${width}%`;bar.append(band);}
+  for(const[left,width,label]of [[0,10,'@'],[10,10,'关键词'],[20,70,'按概率回复'],[90,10,'全部']]){const band=node('div','activity-tier-band',label);band.style.left=`${left}%`;band.style.width=`${width}%`;bar.append(band);}
   for(const left of [10,20,90]){const sep=node('div','activity-tier-sep');sep.style.left=`${left}%`;bar.append(sep);}
   const slider=(kind,label)=>{const el=node('div',`activity-position activity-position-${kind}`);el.setAttribute('role','slider');el.setAttribute('aria-label',label);el.setAttribute('aria-valuemin','0');el.setAttribute('aria-valuemax','100');el.tabIndex=0;bar.append(el);return el;};
   const normal=slider('normal','当前响应档位'),peak=slider('peak','高峰响应档位'),valley=slider('valley','低谷响应档位');
@@ -28,9 +29,10 @@ export function mountActivityView({read:baseRead,draft:retainedDraft,commit,onCh
   const globalPick=button('全局设置',()=>{selected=lastGroup='';refresh();});globalPick.dataset.activityGlobal='';
   let current={dual:false,disabled:false,normal:100,peak:10,valley:100};
   const footer=node('div','activity-footer'),status=node('span','activity-hint','改动先落在草稿里：「保存」整体提交，「取消」放弃未保存的改动。');status.setAttribute('role','status');
-  const cancel=button('取消',()=>discard()),save=button('保存',async()=>{try{await flush();}catch{}},'primary');cancel.dataset.activityCancel='';save.dataset.activitySave='';footer.append(cancel,save,status);host.append(footer);
+  const cancel=button('取消',()=>discard()),save=button('保存',async()=>{try{await flush();}catch{}},'primary');cancel.hidden=save.hidden=true;cancel.dataset.activityCancel='';save.dataset.activitySave='';status.hidden=true;footer.append(cancel,save,status);host.append(footer);
+  const autoSave=createAutoSave({root:host,save:flush,dirty:()=>draft.dirty});
   const clear=button('清除所选群的单独设置',()=>{if(!selected||read('store.unifiedTier')!==false)return;for(const path of ['store.groupSliderPos','store.groupPeakPos']){const next={...(read(path)||{})};delete next[selected];draft.set(path,next);}changed();},'danger');clearRow.append(clear);
-  function changed(){status.textContent='改动先落在草稿里：「保存」整体提交，「取消」放弃未保存的改动。';status.classList.remove('field-error');refresh();onChange();}
+  function changed(){status.textContent='';status.classList.remove('field-error');refresh();onChange();autoSave.schedule();}
   function paint(){
     const{dual,disabled}=current,lo=dual?current.valley:current.normal,hi=current.peak;
     for(const[kind,el]of [['normal',normal],['peak',peak],['valley',valley]]){el.hidden=kind==='normal'?dual:!dual;el.style.left=`${current[kind]}%`;el.setAttribute('aria-valuenow',String(current[kind]));el.setAttribute('aria-disabled',String(disabled));el.tabIndex=disabled?-1:0;}
@@ -79,6 +81,6 @@ export function mountActivityView({read:baseRead,draft:retainedDraft,commit,onCh
   void(async()=>{const result=await Promise.allSettled([request('GET','/api/chats'),request('GET','/api/onebot/groups')]);if(disposed)return;for(const item of result[0].status==='fulfilled'?result[0].value.chats||[]:[]){const key=item.chatKey||item.key?.replace('_',':');if(key?.startsWith('group:')&&item.chatName)names.set(key.slice(6),item.chatName);}if(result[1].status==='fulfilled')for(const item of normalizeQQList(result[1].value,'groups').items||[])names.set(String(item.id),item.name);refresh();})().catch(()=>{});
   return{host,draft,refresh,flush,discard,snapshot:()=>draft.snapshot(),get dirty(){return draft.dirty;},get version(){return draft.version;},
     bindHeader({badge,inputs}){headBadge=badge;for(const[path,input]of inputs){toggles.set(path,input);input.addEventListener('change',event=>{event.stopImmediatePropagation();draft.set(path,input.checked);changed();},true);}refresh();},
-    dispose(){disposed=true;visibility.dispose();picks.clear();names.clear();toggles.clear();},
+    dispose(){disposed=true;autoSave.dispose();visibility.dispose();picks.clear();names.clear();toggles.clear();},
   };
 }

@@ -5,15 +5,25 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#191a19">
   <title>QQ Agent / 控制台</title>
+  <style>
+    @view-transition { navigation: auto; }
+    :root[data-account-handoff]::view-transition-group(root) { animation: none; }
+    :root[data-account-handoff]::view-transition-old(root) { animation: qqa-account-old 8s linear both; mix-blend-mode: normal; }
+    :root[data-account-handoff]::view-transition-new(root) { animation: qqa-account-new 8s linear both; mix-blend-mode: normal; }
+    @keyframes qqa-account-old { from, to { opacity: 1; } }
+    @keyframes qqa-account-new { from, to { opacity: 0; } }
+  </style>
+  <script src="/account-transition.js"></script>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/token-management.css">
-</head>
+  <link rel="stylesheet" href="/account-switcher.css">
+<link rel="stylesheet" href="/panels/visual-refinements.css"></head>
 <body>
   <div class="app-shell">
     <aside class="rail" aria-label="QQ Agent 导航">
       <div class="brand">
-        <button id="brand-emblem" class="brand-emblem" type="button" aria-controls="nav" aria-expanded="true" aria-label="收起侧栏" title="收起侧栏"></button>
-        <span class="brand-copy"><strong>QQ AGENT</strong><small>LOCAL CONTROL SYSTEM</small></span>
+        <button id="brand-emblem" class="brand-emblem" type="button" data-icon-active="true" aria-controls="nav" aria-expanded="true" aria-label="收起侧栏" title="收起侧栏"></button>
+        <span class="brand-copy"><strong>QQ AGENT</strong><small>本地工作台</small></span>
       </div>
       <button id="navigation-dismiss" class="navigation-dismiss" type="button" aria-label="收起导航" title="收起导航；按 Esc 返回工作区"></button>
       <nav id="nav" aria-label="控制台面板"></nav>
@@ -28,6 +38,7 @@
     </aside>
     <section class="workspace">
       <header class="topbar">
+        <div id="account-controls" aria-label="QQ 账号"></div>
         <div class="workspace-context visually-hidden">
           <span id="workspace-index" class="workspace-index" aria-hidden="true">00</span>
           <div><h1 id="workspace-title">控制台</h1><p id="workspace-description" class="visually-hidden">准备工作面板</p></div>

@@ -1,6 +1,8 @@
+import {currentAccountScope} from '../panels/account-scope.js';
+
 export class ApiClient {
-  constructor({token='',base='',timeout=15000,recoverAuth=null}={}) { this.token=token; this.base=base; this.timeout=timeout; this.authVersion=0; this.recoverAuth=recoverAuth; }
-  setToken(token) { const next=String(token ?? '');if(next!==this.token){this.token=next;++this.authVersion;} }
+  constructor({token='',base=currentAccountScope.base,timeout=15000,recoverAuth=null,onTokenChange=null}={}) { this.token=token;Object.defineProperty(this,'base',{value:base,enumerable:true});this.timeout=timeout;this.authVersion=0;this.recoverAuth=recoverAuth;this.onTokenChange=onTokenChange; }
+  setToken(token) { const next=String(token ?? '');if(next!==this.token){this.token=next;++this.authVersion;this.onTokenChange?.(next);} }
   async request(method,path,body,query={},options={}) {
     if (typeof path !== 'string' || !path.startsWith('/api/') || path.includes('..')) throw new Error('无效 API 路径');
     if (!['GET','POST','PUT','DELETE','PATCH'].includes(String(method).toUpperCase())) throw new Error('无效 API 方法');

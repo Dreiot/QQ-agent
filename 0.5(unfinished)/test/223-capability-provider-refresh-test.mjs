@@ -35,7 +35,7 @@ async function holdRefresh(){
   let entered,release;const started=new Promise(done=>{entered=done;}),gate=new Promise(done=>{release=done;});releases.add(release);
   const handler=async route=>{const response=await route.fetch();entered();await gate;await route.fulfill({response});};
   await page.route(base+'/api/skills/capabilities',handler);
-  kernel.bus.emit('status',{syntheticProviderRefresh:true});await started;
+  kernel.bus.emit('status',{configUpdated:true});await started;
   return{async finish(){release();releases.delete(release);await page.unroute(base+'/api/skills/capabilities',handler);}};
 }
 async function retained(handle){await page.waitForTimeout(200);assert.equal(await handle.evaluate(node=>node.isConnected),true,'unchanged metadata retains the original selector');}

@@ -1,6 +1,7 @@
 import { installDisposableDialog } from '../dialog-lifecycle.js';
 import { bindDestructiveAction } from '../destructive-action.js';
 import {createConditionalMotion} from './conditional-motion.js';
+import {createAutoSave,flushAutoSaves} from './auto-save.js';
 
 const ids = value => new Set((Array.isArray(value) ? value : []).map(String));
 const same = (a, b) => a.size === b.size && [...a].every(item => b.has(item));
@@ -68,9 +69,10 @@ export function openListChoice({ kind, load, getSelected, getAllowAll=()=>false,
   allowAll.setAttribute('aria-controls',options.id);
   options.append(search,count,host,retry);viewport.append(options);
   impact.className='list-choice-impact';
-  actions.append(apply,cancel); root.append(heading,allowAll,notice,impact,viewport,actions);
+  apply.hidden=true;actions.append(apply,cancel); root.append(heading,allowAll,notice,impact,viewport,actions);
   let closed = false, clearAction,shownAllowAll=state.view().allowAll;
-  const lifecycle = installDisposableDialog(root, { onClosed() { closed = true; visibility.dispose();clearAction?.dispose(); state.close(); window.removeEventListener('pagehide', dispose); } });
+  const lifecycle = installDisposableDialog(root, {beforeClose:()=>flushAutoSaves(root),onClosed() { closed = true;autoSave.dispose(); visibility.dispose();clearAction?.dispose(); state.close(); window.removeEventListener('pagehide', dispose); } });
+  const autoSave=createAutoSave({root,save:saveSelection,dirty:()=>state.view().pending,onError});
   function dispose() { lifecycle.dispose(); }
   function status(message = '') {
     const view = state.view(), current = isCurrent();
@@ -88,7 +90,7 @@ export function openListChoice({ kind, load, getSelected, getAllowAll=()=>false,
     apply.textContent = view.allowAll||view.policyChanged?'保存设置':view.selected.length ? '保存选择' : '清空并保存'; apply.disabled = !view.canSubmit || !current;
     apply.classList.toggle('danger',!view.allowAll&&!view.policyChanged&&!view.selected.length);
     retry.disabled = view.saving || view.phase === 'loading' || !current;
-    cancel.textContent = view.saving ? '关闭（保存仍在处理中）' : view.staged ? '关闭（未保存草稿保留）' : '取消';
+    cancel.textContent = '完成';
   }
   function draw() {
     if (closed) return;
@@ -98,7 +100,7 @@ export function openListChoice({ kind, load, getSelected, getAllowAll=()=>false,
       const label = doc.createElement('label'); label.className = 'tool-toggle'; label.dataset.choiceId = item.id;
       const checkbox = doc.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = chosen.has(item.id); checkbox.disabled = view.allowAll||view.phase !== 'ready' || !isCurrent();
       const name = doc.createElement('span'); name.textContent = `${item.name} (${item.id})${item.savedOnly ? ' · 已保存，本次 QQ 列表未返回' : ''}`;
-      checkbox.addEventListener('change', () => { state.choose(item.id, checkbox.checked); status(); }); label.append(checkbox, name); host.append(label);
+      checkbox.addEventListener('change', () => { state.choose(item.id, checkbox.checked); status();autoSave.schedule(); }); label.append(checkbox, name); host.append(label);
     }
     status();
   }
@@ -109,20 +111,20 @@ export function openListChoice({ kind, load, getSelected, getAllowAll=()=>false,
     if (!closed) draw();
   }
   async function saveSelection(){
-    if (!isCurrent()) { status(); return; }
-    const sent = state.beginCommit(); if (!sent) return;
-    if (sent.noop) { lifecycle.close(); return; }
+    if (!isCurrent()) throw Error('设置已刷新，请重新打开选择器');
+    const sent = state.beginCommit(); if (!sent) return false;
+    if (sent.noop) return;
     status();
     try {
       await commit(sent.selected,{allowAll:sent.allowAll,changed:sent.policyChanged});
       const accepted = state.acceptCommit(sent);
       if (closed) return;
-      if (accepted.close && isCurrent()) { lifecycle.close(); onSaved(); } else status('此前选择已保存；当前勾选尚未保存。');
-    } catch (error) { state.rejectCommit(sent, error); onError(error); if (!closed) status(); }
+      onSaved();status();
+    } catch (error) { state.rejectCommit(sent, error); onError(error); if (!closed) status();throw error; }
   }
   apply.addEventListener('click',()=>{const view=state.view();if(view.allowAll||view.policyChanged||view.selected.length)void saveSelection();});
   clearAction=bindDestructiveAction(apply,{action:saveSelection,clicks:3,target:()=>host,canActivate:()=>{const view=state.view();return !closed&&isCurrent()&&view.canSubmit&&!view.allowAll&&!view.policyChanged&&!view.selected.length;},impact:()=>getEmptyPolicy()===true?'清空白名单并保存；此后允许响应所有会话。':'清空白名单并保存；此后不响应任何会话。'});
-  allowAll.addEventListener('click',()=>{state.chooseAll(!state.view().allowAll);draw();});
+  allowAll.addEventListener('click',()=>{state.chooseAll(!state.view().allowAll);draw();autoSave.schedule();});
   search.addEventListener('input', draw); retry.addEventListener('click', () => { void read(); }); cancel.addEventListener('click', () => lifecycle.close());
   window.addEventListener('pagehide', dispose, { once: true }); doc.body.append(root); root.showModal(); void read();
   return { root, dispose: () => lifecycle.close() };

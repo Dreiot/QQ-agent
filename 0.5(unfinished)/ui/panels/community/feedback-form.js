@@ -1,5 +1,6 @@
 import{request,publishFeedback,cancelFeedbackPublish,onLeave}from'/panels/panel-client.js';
 import{button,bindDestructiveAction}from'../ui.js';
+import{prepareDialog}from'../dialog-lifecycle.js';
 import{FeedbackDraft}from'./feedback-draft-state.js';
 const IMAGE_TYPES=new Set(['image/png','image/jpeg','image/webp','image/gif']);
 // Official comments client: <=300KiB unchanged; larger images -> longest side 1600 / JPEG .85.
@@ -134,7 +135,7 @@ export function createFeedbackForm({status}){
     const actions=document.createElement('div');actions.className='actions';actions.append(button('取消',()=>cleanup()),manualSave,compare,discard,back,preview,submit);form.append(editor,review,feedback,draftStatus,comparison,actions);form.addEventListener('submit',event=>event.preventDefault());
     current.addEventListener('cancel',event=>{event.preventDefault();void cleanup();});current.addEventListener('close',()=>{void cleanup();},{once:true});
     hydrateCurrent=hydrate;
-    current.append(heading,notice,form);document.body.append(current);current.showModal();nickname.focus();
+    current.append(heading,notice,form);prepareDialog(current);document.body.append(current);current.showModal();nickname.focus();
     hydrate();draftNotice(draft.dirty?'草稿尚未保存到本机':'正在读取本机草稿…');
     void draft.load().then(()=>{if(!closed){hydrate();draftNotice(draft.conflict?'本机草稿有冲突，请先对比':draft.dirty?'草稿尚未保存到本机':'草稿已从本机恢复');}},error=>draftNotice(`无法读取本机草稿：${error.message}；当前输入仍保留`));
   };

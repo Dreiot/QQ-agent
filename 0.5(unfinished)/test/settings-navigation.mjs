@@ -1,6 +1,6 @@
 // User-visible navigation for business regressions after the settings page
-// adopted the legacy nine-section structure. No force clicks or DOM mutation.
-const canonical=id=>({wake:'chat',send:'chat',active:'chat',security:'chat',blocklist:'chat',reset:'desktop',data:'desktop',interface:'desktop',updates:'desktop',prices:'models',uikit:'desktop'}[id]||id);
+// adopted purpose-based sections and automatic saving. No force clicks or DOM mutation.
+const canonical=id=>({wake:'chat',send:'chat',active:'chat',blocklist:'chat',reset:'desktop',data:'desktop',interface:'desktop',updates:'desktop',prices:'models',uikit:'appearance'}[id]||id);
 export async function closeSettingsEditors(frame){
   for(const dialog of (await frame.locator('dialog[data-settings-editor][open]').all()).reverse())await dialog.locator('.settings-dialog-head button').click();
 }
@@ -13,11 +13,12 @@ export async function openSettingsFold(frame,key){
 export async function settingsSection(frame,id){
   await closeSettingsEditors(frame);
   await frame.locator(`#settings-sidebar a[data-target="${canonical(id)}"]`).click();
-  if(id==='uikit'){await openSettingsFold(frame,'layout-desktop-interface');await frame.locator('[data-settings-open=appearance]').click();}
-  const fold={wake:'activity',send:'send',active:'proactive',security:'security',reset:'data',data:'data',interface:'desktop-interface',updates:'desktop-update',prices:'prices'}[id];if(fold)await openSettingsFold(frame,`layout-${fold}`);
+  const fold={wake:'activity',send:'send',active:'proactive',reset:'data',data:'data',interface:'desktop-interface',updates:'desktop-update',prices:'prices'}[id];if(fold)await openSettingsFold(frame,`layout-${fold}`);
 }
 export async function settingsEditor(frame,id){
-  const owner={'model-config':'models','model-manager':'models','search-source':'search','search-manager':'search','tier-params':'chat','global-persona':'persona',appearance:'desktop','prompt-preview':'tools'}[id];
+  if(id==='model-config'){await settingsSection(frame,'models');return frame.locator('.model-config-layout');}
+  if(id==='appearance'){await settingsSection(frame,'appearance');return frame.locator('#section-appearance');}
+  const owner={'model-config':'models','model-manager':'models','search-source':'search','search-manager':'search','tier-params':'chat','global-persona':'persona',appearance:'desktop','prompt-preview':'persona'}[id];
   await settingsSection(frame,id==='appearance'?'interface':owner);await frame.locator(`[data-settings-open="${id}"]`).click();
   return frame.locator(`dialog[data-settings-editor="${id}"]`);
 }
@@ -31,9 +32,7 @@ export async function settingsPickModel(frame,kind,provider,model){
   await frame.getByRole('button',{name:label,exact:true}).click();const picker=frame.locator('dialog.model-picker');await picker.locator(`nav [data-provider-id="${provider}"]`).click();await picker.locator(`button[data-model-id="${model}"]`).click();await picker.waitFor({state:'detached'});
 }
 export async function settingsSave(frame){
-  const editor=frame.locator('dialog[data-settings-editor][open]').last();
-  if(await editor.count()&&await editor.locator('[data-settings-save]').count())await editor.locator('[data-settings-save]').click();
-  else await frame.locator('#save').click();
+  await frame.locator('.settings-save-toast[data-state=saved]').waitFor({state:'attached'});
 }
 export async function settingsReload(frame){
   const editor=frame.locator('dialog[data-settings-editor][open]').last();

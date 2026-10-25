@@ -1,5 +1,6 @@
 import{request,publishQuote,cancelQuotePublish,onLeave}from'/panels/panel-client.js';
 import{button,destructiveButton,dateTime}from'../ui.js';
+import{prepareDialog}from'../dialog-lifecycle.js';
 
 // Publish reviewed fields and inline picture bytes. Archive ids, group keys,
 // original media coordinates and reply objects stay local.
@@ -106,7 +107,7 @@ export function createQuoteMode({trigger=null,preview,status,getMessages,onModeC
     const actions=document.createElement('div');actions.className='actions';actions.append(button('取消',cleanup),submit);form.append(feedback,actions);form.addEventListener('submit',event=>event.preventDefault());
     currentDialog.addEventListener('cancel',event=>{event.preventDefault();cleanup();});
     currentDialog.addEventListener('close',cleanup,{once:true});
-    currentDialog.append(title,notice,form);document.body.append(currentDialog);currentDialog.showModal();onPreviewChange();refreshMedia();nickname.focus();
+    currentDialog.append(title,notice,form);prepareDialog(currentDialog);document.body.append(currentDialog);currentDialog.showModal();onPreviewChange();refreshMedia();nickname.focus();
   });
   onLeave(()=>{exit();});sync();
   return{

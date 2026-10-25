@@ -31,7 +31,7 @@
 .activity-card button:active:not(:disabled) { transform:scale(.97); }
 .activity-card .activity-peak-control { display:inline-flex;align-items:center;gap:6px;min-height:var(--control-height);padding:0 14px;border:1px solid var(--line-strong);background:var(--surface-2);border-radius:8px;font-size:12.5px;font-weight:600; }
 .activity-card .activity-peak-control { cursor:pointer;user-select:none; }
-.activity-card .activity-peak-control:focus-visible { outline:2px solid var(--focus);outline-offset:2px; }
+.activity-card .activity-peak-control:focus-visible { outline:var(--focus-width) solid var(--focus);outline-offset:-2px; }
 .activity-card .activity-peak-label { line-height:1.4; }
 .activity-card .activity-switch {
   display:inline-flex;position:relative;flex-direction:row;align-items:center;gap:10px;
@@ -47,7 +47,7 @@
 .activity-card .activity-switch-thumb { position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:var(--text);transition:transform .22s ease; }
 .activity-card .activity-switch input:checked ~ .activity-switch-track { background:var(--accent); }
 .activity-card .activity-switch input:checked ~ .activity-switch-track .activity-switch-thumb { transform:translateX(17px); }
-.activity-card .activity-switch input:focus-visible ~ .activity-switch-track { outline:2px solid var(--focus);outline-offset:2px; }
+.activity-card .activity-switch input:focus-visible ~ .activity-switch-track { outline:var(--focus-width) solid var(--focus);outline-offset:-2px; }
 .activity-card .activity-switch:has(input:disabled) { opacity:.5;cursor:not-allowed; }
 .activity-card .activity-badge { font:11px/1.6 var(--activity-mono);color:var(--muted);letter-spacing:.01em;white-space:nowrap; }
 .activity-card .activity-chevron { display:inline-block;color:var(--muted);transition:transform .22s ease; }

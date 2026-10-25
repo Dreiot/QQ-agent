@@ -4,6 +4,12 @@ export function createConditionalMotion(doc=document){
   const win=doc.defaultView,media=win.matchMedia('(prefers-reduced-motion: reduce)'),entries=new Map(),layouts=new Map();
   const names=new Set(['settings-options-appear','search-service-appear','memory-cooldown-appear','model-media-appear','proactive-options-appear']);
   const enterDuration=220,exitDuration=160,easing='cubic-bezier(.2,.75,.2,1)';
+  const motionFactor=()=>{
+    if(doc.body?.dataset.interfaceMotion==='off')return 0;
+    const value=parseFloat(win.getComputedStyle(doc.documentElement).getPropertyValue('--motion-duration-factor'));
+    return Number.isFinite(value)?Math.max(0,Math.min(2,value)):1;
+  };
+  const canAnimate=()=>!media.matches&&!doc.hidden&&motionFactor()>0;
   let disposed=false;
   const keep=(el,keys)=>keys.map(key=>[key,el.style.getPropertyValue(key),el.style.getPropertyPriority(key)]);
   const putBack=(el,styles)=>{for(const[key,value,priority]of styles)value?el.style.setProperty(key,value,priority):el.style.removeProperty(key);};
@@ -17,9 +23,9 @@ export function createConditionalMotion(doc=document){
     if([...entries].some(([el,entry])=>el.parentElement===parent&&entry.animation))return;
     // Async labels or a nested reveal can change the natural endpoint while
     // moving. Reconcile that size before releasing auto height, without a snap.
-    if(!disposed&&!media.matches&&!doc.hidden&&parent.isConnected&&parent.getClientRects().length){
+    if(!disposed&&canAnimate()&&parent.isConnected&&parent.getClientRects().length){
       const before=snapshot(parent);layout.animation?.cancel();
-      if(Math.abs(parent.getBoundingClientRect().height-before.height)>.5){animateLayout(parent,before,100);return;}
+      if(Math.abs(parent.getBoundingClientRect().height-before.height)>.5){animateLayout(parent,before,100*motionFactor());return;}
     }
     stopLayout(parent);
   }
@@ -83,12 +89,16 @@ export function createConditionalMotion(doc=document){
   };
   function finish(el,entry){++entry.version;entry.animation?.cancel();entry.animation=null;restore(el,entry);el.dataset.conditionalStatic='';releaseLayout(el.parentElement);}
   const settle=()=>{for(const[el,entry]of entries)finish(el,entry);for(const parent of [...layouts.keys()])stopLayout(parent);};
-  const policy=()=>{if(media.matches||doc.hidden)settle();};
+  let previousFactor=motionFactor();
+  const policy=()=>{const factor=motionFactor();if(!canAnimate()||factor!==previousFactor)settle();previousFactor=factor;};
   media.addEventListener('change',policy);doc.addEventListener('visibilitychange',policy);win.addEventListener('pagehide',settle);
   // Closing an editor/section may cancel CSS playback before its promise
   // settles. Finish that visual removal now, before the editor is reopened.
   const observer=new win.MutationObserver(()=>{if(!disposed){for(const[el,entry]of entries)if(entry.animation&&(!el.isConnected||!el.getClientRects().length))finish(el,entry);for(const parent of layouts.keys())if(!parent.isConnected||!parent.getClientRects().length)stopLayout(parent);}});
   observer.observe(doc.body,{subtree:true,childList:true,attributes:true,attributeFilter:['hidden','open']});
+  const preferenceObserver=new win.MutationObserver(policy);
+  preferenceObserver.observe(doc.documentElement,{attributes:true,attributeFilter:['style']});
+  preferenceObserver.observe(doc.body,{attributes:true,attributeFilter:['data-interface-motion']});
   function set(el,visible){
     if(disposed||!el)return;
     visible=!!visible;
@@ -109,10 +119,10 @@ export function createConditionalMotion(doc=document){
       }
       el.setAttribute('aria-hidden','true');
     }
-    if(media.matches||doc.hidden||!el.isConnected||!el.getClientRects().length){finish(el,entry);return;}
+    if(!canAnimate()||!el.isConnected||!el.getClientRects().length){finish(el,entry);return;}
     const animation=el.getAnimations().find(item=>names.has(item.animationName));
     if(!animation){finish(el,entry);return;}
-    const progress=fromStatic?(visible?0:1):Math.max(0,Math.min(1,Number(animation.currentTime)/animation.effect.getComputedTiming().endTime)),duration=visible?enterDuration:exitDuration;
+    const progress=fromStatic?(visible?0:1):Math.max(0,Math.min(1,Number(animation.currentTime)/animation.effect.getComputedTiming().endTime)),duration=(visible?enterDuration:exitDuration)*motionFactor();
     animation.effect.updateTiming({duration});animation.currentTime=progress*duration;
     entry.animation=animation;el.dataset.conditionalPhase=visible?'entering':'leaving';
     if(parent){
@@ -129,7 +139,7 @@ export function createConditionalMotion(doc=document){
     animation.finished.then(()=>{if(!disposed&&entry.version===version){entry.animation=null;restore(el,entry);releaseLayout(parent);}},()=>{if(!disposed&&entry.version===version)finish(el,entry);});
   }
   function dispose(){
-    if(disposed)return;disposed=true;observer.disconnect();settle();media.removeEventListener('change',policy);doc.removeEventListener('visibilitychange',policy);win.removeEventListener('pagehide',settle);
+    if(disposed)return;disposed=true;observer.disconnect();preferenceObserver.disconnect();settle();media.removeEventListener('change',policy);doc.removeEventListener('visibilitychange',policy);win.removeEventListener('pagehide',settle);
     for(const[el,entry]of entries){el.inert=entry.inert;if(entry.aria===null)el.removeAttribute('aria-hidden');else el.setAttribute('aria-hidden',entry.aria);if(entry.motion===null)el.removeAttribute('data-motion');else el.setAttribute('data-motion',entry.motion);delete el.dataset.conditionalStatic;el.classList.remove('settings-conditional');}
     entries.clear();
   }

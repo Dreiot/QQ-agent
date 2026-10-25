@@ -1,5 +1,7 @@
 import {destructiveButton} from '../ui.js';
 import {installDisposableDialog} from '../dialog-lifecycle.js';
+import {createAutoSave,flushAutoSaves,saveFeedback} from './auto-save.js';
+import {createIcon} from '../icons.js';
 
 const LEGACY_SOURCES=[
   ['deepseek','DeepSeek',['https://api.deepseek.com/responses']],
@@ -26,6 +28,7 @@ export function createSearchSources({read,commit,save,request,onDraftChange=()=>
   const node=(tag,cls,text)=>{const el=doc.createElement(tag);if(cls)el.className=cls;if(text!==undefined)el.textContent=text;return el;};
   const action=(label,run)=>{const el=node('button','',label);el.type='button';el.addEventListener('click',run);return el;};
   const choice=action('选择搜索源',()=>openPicker()),manage=action('管理搜索源',()=>openManager());
+  const choiceLabel=node('span','','选择搜索源');choice.replaceChildren(choiceLabel,createIcon('chevron',{size:16}));
   choice.className='search-source-choice';choice.setAttribute('aria-haspopup','dialog');choice.dataset.settingsOpen='search-picker';
   manage.className='search-source-manage full';manage.setAttribute('aria-haspopup','dialog');manage.dataset.settingsOpen='search-manager';
   function sources(){
@@ -33,24 +36,24 @@ export function createSearchSources({read,commit,save,request,onDraftChange=()=>
     if(read('webSearch.custom.baseUrl')||read('webSearch.provider')==='custom')builtin.push({id:'custom',name:read('webSearch.custom.name')||'自定义搜索',baseUrl:read('webSearch.custom.baseUrl')||'',prefix:'webSearch.custom',hasApiKey:read('webSearch.custom.hasApiKey')===true,keySupported:true});
     return [...builtin,...(custom??read('webSearch.providers')??[]).map(item=>({...item,id:`custom:${item.id}`,customId:item.id,keySupported:item.type!=='bing'}))];
   }
-  function refresh(){if(disposed)return;choice.textContent=sources().find(item=>item.id===read('webSearch.provider'))?.name||'选择搜索源';}
+  function refresh(){if(disposed)return;choiceLabel.textContent=sources().find(item=>item.id===read('webSearch.provider'))?.name||'选择搜索源';}
   async function refreshCustom(){const version=++customVersion,result=await request('GET','/api/search-providers');if(!disposed&&version===customVersion)custom=result.providers||[];}
   function shell(title,kind){
     const root=node('dialog',`search-source-dialog ${kind}`);root.dataset.settingsEditor=kind;
     const head=node('div','settings-dialog-head'),heading=node('h3','',title),close=action('关闭',()=>root.close()),body=node('div','settings-dialog-body'),feedback=node('p','search-source-feedback');feedback.setAttribute('role','status');
     head.append(heading,close);root.append(head,body,feedback);
-    const life=installDisposableDialog(root,{dismissOnBackdrop:true,canClose:()=>!busy,onClosed:()=>{for(const input of root.querySelectorAll('input[type=password]'))input.value='';if(kind==='search-manager'){for(const draft of drafts.values())draft.apiKey='';drafts.clear();manager=null;onDraftChange();}else picker=null;}});
+    const life=installDisposableDialog(root,{dismissOnBackdrop:true,beforeClose:()=>flushAutoSaves(root),onClosed:()=>{view.autoSave?.dispose();for(const input of root.querySelectorAll('input[type=password]'))input.value='';if(kind==='search-manager'){for(const draft of drafts.values())draft.apiKey='';drafts.clear();manager=null;onDraftChange();}else picker=null;}});
     const view={root,body,feedback,life};doc.body.append(root);root.showModal();return view;
   }
   function fail(view,error){if(!disposed&&!view.life.closed){view.feedback.textContent=error.message||'操作失败';view.feedback.classList.add('error');}}
-  function setBusy(view,value){busy=value;for(const button of view.root.querySelectorAll('button,input'))button.disabled=value;onDraftChange();}
+  function setBusy(view,value){busy=value;for(const button of view.root.querySelectorAll('button'))button.disabled=value;onDraftChange();}
   async function openPicker(){
     if(disposed)return;if(picker){picker.root.focus();return;}
     const view=picker=shell('选择搜索源','search-picker'),grid=node('div','search-source-grid');view.body.append(grid);
     const draw=()=>{if(disposed||view.life.closed)return;grid.replaceChildren();for(const source of sources()){
       const pick=action(source.name,async()=>{if(busy)return;setBusy(view,true);view.feedback.textContent='';try{
         if(source.customId){await refreshCustom();if(!sources().some(item=>item.id===source.id))throw Error('搜索源已移除，请重新选择');}
-        if(disposed||view.life.closed)return;await commit([{path:'webSearch.provider',value:source.id}]);refresh();setBusy(view,false);view.root.close();
+        if(disposed||view.life.closed)return;await commit([{path:'webSearch.provider',value:source.id}]);saveFeedback('saved');refresh();setBusy(view,false);view.root.close();
       }catch(error){fail(view,error);}finally{if(!view.life.closed)setBusy(view,false);}});
       pick.dataset.searchSource=source.id;pick.className='search-source-card';pick.setAttribute('aria-pressed',String(source.id===read('webSearch.provider')));grid.append(pick);
     }};draw();try{await refreshCustom();draw();}catch(error){fail(view,error);}
@@ -77,25 +80,27 @@ export function createSearchSources({read,commit,save,request,onDraftChange=()=>
   }
   async function openManager(){
     if(disposed)return;if(manager){manager.root.focus();return;}
-    const view=manager=shell('管理搜索源','search-manager'),layout=node('div','search-source-layout'),nav=node('nav','search-source-nav'),editor=node('div','search-source-editor');
+    const view=manager=shell('管理搜索源','search-manager'),layout=node('div','search-source-layout'),nav=node('nav','search-source-nav'),editor=node('div','search-source-editor');let autoSave=null;
     nav.setAttribute('aria-label','可用搜索源');layout.append(nav,editor);view.body.append(layout);let active=sources().find(item=>item.id===read('webSearch.provider'))?.id||sources()[0]?.id;
     function drawNav(){
       nav.replaceChildren();for(const source of sources()){
-        const pick=action(source.name,()=>{if(busy)return;active=source.id;draw();});pick.dataset.searchSource=source.id;pick.setAttribute('aria-pressed',String(active===source.id));nav.append(pick);
+        const pick=action(source.name,async()=>{try{await autoSave?.flush();active=source.id;draw();}catch(error){fail(view,error);}});pick.dataset.searchSource=source.id;pick.setAttribute('aria-pressed',String(active===source.id));nav.append(pick);
       }
-      const add=action('添加搜索源',()=>{if(busy)return;active=null;draw();});add.className='search-source-add';add.setAttribute('aria-pressed',String(active===null));nav.append(add);
+      const add=action('添加搜索源',async()=>{try{await autoSave?.flush();active=null;draw();}catch(error){fail(view,error);}});add.className='search-source-add';add.setAttribute('aria-pressed',String(active===null));nav.append(add);
     }
     function draw(){
-      if(disposed||view.life.closed)return;drawNav();editor.replaceChildren();view.feedback.textContent='';view.feedback.classList.remove('error');
+      if(disposed||view.life.closed)return;autoSave?.dispose();autoSave=null;drawNav();editor.replaceChildren();view.feedback.textContent='';view.feedback.classList.remove('error');
       const source=sources().find(item=>item.id===active),draft=draftFor(source);
       for(const[key,label,type]of [['name','名称','text'],['baseUrl','接口地址','url'],['apiKey','API Key（可空）','password']]){
         const wrap=node('label','setting-field'),input=node('input');input.type=type;input.name=key;input.value=draft[key];input.autocomplete=type==='password'?'new-password':'off';
         if(key==='apiKey'){input.disabled=source?.keySupported===false;input.placeholder=input.disabled?'此搜索源无需 API Key':source?.hasApiKey?'已配置；留空保留现有密钥':'可留空';}
-        input.addEventListener('input',()=>{draft[key]=input.value;draft.dirty=true;onDraftChange();});wrap.append(node('span','',label),input);editor.append(wrap);
+        input.addEventListener('input',()=>{draft[key]=input.value;draft.dirty=true;onDraftChange();autoSave?.schedule();});wrap.append(node('span','',label),input);editor.append(wrap);
       }
-      const actions=node('div','actions'),commitButton=action(source?'保存搜索源':'添加搜索源',async()=>{
-        if(busy)return;const snapshot={...draft};setBusy(view,true);view.feedback.textContent='正在保存…';view.feedback.classList.remove('error');try{const id=await persist(source,snapshot);if(disposed||view.life.closed)return;draft.apiKey='';drafts.delete(source?.id||'add');active=id;refresh();draw();view.feedback.textContent='已保存';}catch(error){fail(view,error);}finally{if(!view.life.closed){setBusy(view,false);const key=editor.querySelector('[name=apiKey]');if(key&&source?.keySupported===false)key.disabled=true;}}
-      });commitButton.className='primary';actions.append(commitButton);
+      async function persistCurrent(){
+        if(busy)return false;const snapshot={...draft};setBusy(view,true);view.feedback.textContent='';view.feedback.classList.remove('error');try{const id=await persist(source,snapshot);if(disposed||view.life.closed)return;const unchanged=['name','baseUrl','apiKey'].every(key=>draft[key]===snapshot[key]);if(unchanged){draft.apiKey='';draft.dirty=false;const key=editor.querySelector('[name=apiKey]');if(key)key.value='';}active=id;refresh();if(!source)saveFeedback('saved','已添加');if(!source){drafts.delete('add');draw();}else drawNav();}catch(error){fail(view,error);return false;}finally{if(!view.life.closed){setBusy(view,false);const key=editor.querySelector('[name=apiKey]');if(key&&source?.keySupported===false)key.disabled=true;}}
+      }
+      const actions=node('div','actions'),commitButton=action(source?'保存搜索源':'添加搜索源',persistCurrent);commitButton.hidden=!!source;commitButton.className='primary';actions.append(commitButton);
+      if(source){autoSave=createAutoSave({root:editor,save:persistCurrent,dirty:()=>draft.dirty,onError:error=>fail(view,error)});view.autoSave=autoSave;}
       if(source?.hasApiKey&&source.keySupported){const clear=destructiveButton('清除密钥',async()=>{
         if(draft.dirty)throw Error('请先保存名称和接口地址，再清除密钥');setBusy(view,true);try{await persist(source,{...draft,apiKey:''},true);if(disposed||view.life.closed)return;drafts.delete(source.id);draw();view.feedback.textContent='密钥已清除';}finally{if(!view.life.closed)setBusy(view,false);}
       },{clicks:3,target:()=>editor,key:()=>source.id,impact:`将清除 ${source.name} 的 API Key。`});actions.append(clear);}

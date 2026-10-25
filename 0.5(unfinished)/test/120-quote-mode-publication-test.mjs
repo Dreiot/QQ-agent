@@ -59,7 +59,7 @@ const kernel=createKernel({appRoot:isolation.appRoot,env:isolation.env,headless:
     return new Response(JSON.stringify(remoteStatus===200?{ok:true,irrelevant:'never forward upstream metadata'}:{ok:false,error:remoteError}),{status:remoteStatus,headers:{'content-type':'application/json',...(remoteStatus===302?{location:'https://evil.invalid/'}:{})}});
   },
 });
-kernel.config.update({server:{port:0,token},telemetry:{enabled:false},proactive:{enabled:false},api:{apiKey:'private-key120'},security:{mediaRoots:[path.join(dataDir,'media')]}});
+kernel.config.update({server:{port:0,token},telemetry:{enabled:false},proactive:{enabled:false},allow:{groups:['123456'],private:[]},api:{apiKey:'private-key120'},security:{mediaRoots:[path.join(dataDir,'media')]}});
 kernel.store.appendIncoming('group:123456',{mid:510000,senderId:'678900',senderName:'QA 小李',text:'引用原文',ts:1759999999000});
 kernel.store.markAllRead('group:123456');
 const first=kernel.store.appendIncoming('group:123456',{mid:510001,senderId:'678901',senderName:'QA 小林',text:'旁观者原话',reply:{mid:510000,sender:'QA 小李',text:'引用原文'},ts:1760000000000});

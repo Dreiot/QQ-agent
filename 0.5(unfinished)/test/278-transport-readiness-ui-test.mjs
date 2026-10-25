@@ -74,7 +74,7 @@ test('real settings form saves independent manual endpoints and keeps credential
   const ws = frame.locator('[data-config-path="onebot.wsUrl"]'), http = frame.locator('[data-config-path="onebot.httpUrl"]');
   await ws.waitFor({ state: 'visible' }); await http.waitFor({ state: 'visible' });
   await ws.fill('ws://127.0.0.1:31702/events'); await http.fill('http://127.0.0.1:31703/actions');
-  await frame.locator('#save').click(); await frame.locator('#status').filter({ hasText: '已保存' }).waitFor();
+  await frame.locator('.settings-save-toast[data-state=saved]').waitFor({state:'visible'});
   assert.equal(qa.disk().onebot.wsUrl, 'ws://127.0.0.1:31702/events'); assert.equal(qa.disk().onebot.httpUrl, 'http://127.0.0.1:31703/actions');
   assert.equal((await qa.request('GET', '/api/onebot-token?which=ws')).data.token, 'SYNTHETIC_SHOW_WS_278');
   assert.equal((await qa.request('GET', '/api/onebot-token?which=http')).data.token, '', 'show existing HTTP credential must not display an inherited WS credential');

@@ -259,7 +259,7 @@ export function createStoredZip(files) {
   return Buffer.concat([...locals, centralData, end]);
 }
 
-export function createCommunityMarketAdapters({ dataDir, config, fetchImpl = fetch, dnsLookup, appRoot = APP_ROOT, communityKey, fsImpl = fs, installZip, signal = () => null } = {}) {
+export function createCommunityMarketAdapters({ dataDir, config, fetchImpl = fetch, dnsLookup, appRoot = APP_ROOT, extensionRoot = appRoot, communityKey, fsImpl = fs, installZip, signal = () => null } = {}) {
   const cacheFile = path.join(dataDir, BLOCKLIST_FILE);
   const accountsFile = path.join(dataDir, ACCOUNT_FILE);
   const request = async (pathname, { method = 'GET', headers = {}, body, timeoutMs = 30_000, maxBytes = MARKET_MAX_ZIP_BYTES, followRedirects = true, requestSignal = signal() } = {}) => {
@@ -503,8 +503,14 @@ export function createCommunityMarketAdapters({ dataDir, config, fetchImpl = fet
     if (!normalizedKind || !SAFE_ID.test(String(id ?? ''))) throw Object.assign(new Error(`无效的 ${normalizedKind || kind} id：${id}`), { expose: true, status: 400 });
     const record = accountRecord(accounts(), accountUsername);
     if (!record) throw Object.assign(new Error('请先选择一个已登录的账号'), { expose: true, status: 401 });
-    const dir = path.join(appRoot, normalizedKind === 'plugin' ? 'plugins' : 'skills', id);
+    const dir = path.join(extensionRoot, normalizedKind === 'plugin' ? 'plugins' : 'skills', id);
     if (!fsImpl.existsSync(dir) || !fsImpl.statSync(dir).isDirectory()) throw Object.assign(new Error(`目录不存在：${dir}`), { expose: true, status: 502 });
+    let current = path.parse(path.resolve(dir)).root;
+    for (const part of path.resolve(dir).slice(current.length).split(path.sep).filter(Boolean)) {
+      current = path.join(current, part);
+      const stat = fsImpl.lstatSync(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw Object.assign(new Error('发布目录及父路径不接受符号链接'), { expose: true, status: 403 });
+    }
     let zip;
     try { zip = createStoredZip(collectPublishFiles(dir, fsImpl)); }
     catch (err) { throw Object.assign(new Error(err?.message ?? err), { expose: true, status: 502 }); }
@@ -558,7 +564,7 @@ export function createCommunityMarketAdapters({ dataDir, config, fetchImpl = fet
     try {
       // 市场条目名可被服务器改名；执行身份只来自校验后的包内清单。
       const result = await installZip(response.body, { kind });
-      return { ...result, kind, id: result.installed, dir: path.join(appRoot, result.root, result.installed) };
+      return { ...result, kind, id: result.installed, dir: path.join(extensionRoot, result.root, result.installed) };
     } catch (err) {
       if (err?.expose && [403, 409, 500, 503].includes(err.status)) throw err;
       throw Object.assign(new Error(String(err?.message ?? err)), { expose: true, status: 502 });

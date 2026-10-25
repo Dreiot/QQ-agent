@@ -124,18 +124,18 @@ try{
   console.log('· Memory: entity controls survive refresh; member deletion needs two and whole-chat clearing four clicks');
   await navigate('memory');const memoryRow=frame().locator(`[data-memory-chat="${chatKey}"]`);await memoryRow.locator('strong').click();
   const member=frame().locator('[data-member="16901"]'),memberDelete=member.getByRole('button',{name:'删除成员',exact:true});await memberDelete.waitFor();const memberControl=await memberDelete.elementHandle();
-  await threshold(memberDelete,{clicks:2,method:'DELETE',pathname:`/api/memory-files/${routeKey}/members/16901`,afterClick:async()=>{const reads=requestCount('GET',`/api/memory-files/${routeKey}`);kernel.bus.emit('memory.update',{chatKey});await until(()=>requestCount('GET',`/api/memory-files/${routeKey}`)>reads,'memory SSE must refresh member cards');await delay(25);assert.equal(await memberControl.evaluate(node=>node.isConnected),true);near(await progress(memberDelete),.5,'memory refresh preserves member progress');}});
+  await threshold(memberDelete,{clicks:2,method:'DELETE',pathname:`/api/memory-files/${routeKey}/members/16901`,afterClick:async()=>{const reads=requestCount('GET',`/api/memory-files/${routeKey}`);await actualFrame().evaluate(async()=>{window.qa169MemoryEventObserved=false;const {onShellEvent}=await import('/panels/panel-client.js');const off=onShellEvent(name=>{if(name==='memory-update'){window.qa169MemoryEventObserved=true;off();}});});kernel.bus.emit('memory.update',{chatKey});await until(()=>actualFrame().evaluate(()=>window.qa169MemoryEventObserved),'memory SSE must arrive before advancing the paused clock');await page.clock.runFor(90);await until(()=>requestCount('GET',`/api/memory-files/${routeKey}`)>reads,'memory SSE must refresh member cards');await delay(25);assert.equal(await memberControl.evaluate(node=>node.isConnected),true);near(await progress(memberDelete),.5,'memory refresh preserves member progress');}});
   await threshold(memoryRow.getByRole('button',{name:'删除',exact:true}),{clicks:4,method:'DELETE',pathname:`/api/memory-files/${routeKey}`});
 
   console.log('· Settings: provider deletion needs four clicks and secret clearing three, with no confirmation dialog');
-  await navigate('settings');await frame().locator('#status').filter({hasText:'配置已读取'}).waitFor();
+  await navigate('settings');await frame().locator('#settings-sidebar a[data-target=models]').waitFor();
   await settingsEditor(frame(),'model-manager');
   const provider=frame().locator('#provider-list article').filter({hasText:'QA Provider169'});
   await threshold(provider.locator('.provider-detail-head').getByRole('button',{name:'删除渠道',exact:true}),{clicks:4,method:'DELETE',pathname:'/api/providers'});
   await settingsProvider(frame(),'qa-provider169');
   // This fixture keeps the secret in direct mode; seed a synthetic channel key
   // through the real config store before checking its independent clear action.
-  kernel.config.update({dshProviderKeys:{'qa-provider169':'synthetic-channel169'}});await frame().locator('dialog[data-settings-editor=model-manager] [data-settings-reload]').click();
+  kernel.config.update({dshProviderKeys:{'qa-provider169':'synthetic-channel169'}});await frame().locator('dialog[data-settings-editor=model-manager]').press('Escape');await frame().locator('#reload').click();await page.clock.runFor(90);await settingsEditor(frame(),'model-manager');
   await provider.locator('[data-manager-key=set]').waitFor();
   await threshold(provider.getByRole('button',{name:'清除密钥',exact:true}),{clicks:3,method:'POST',pathname:'/api/providers/set-key'});
   await settingsSection(frame(),'uikit');
@@ -154,7 +154,7 @@ try{
   const coverage=await page.locator('.destructive-window-wash').evaluate(node=>{const rect=node.getBoundingClientRect();return{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom,width:innerWidth,height:innerHeight,pointerEvents:getComputedStyle(node).pointerEvents};});
   assert.ok(coverage.left<=0&&coverage.top<=0&&coverage.right>=coverage.width&&coverage.bottom>=coverage.height);assert.equal(coverage.pointerEvents,'none');
   await saveShot(page,'settings-window-five-of-six');await navigate('sessions');assert.equal(await page.locator('.destructive-window-wash').count(),0,'leaving settings removes host tint');
-  await navigate('settings');await frame().locator('#status').filter({hasText:'配置已读取'}).waitFor();await openReset();near(await progress(frame().locator('#reset')),0,'remount starts uncharged');
+  await navigate('settings');await frame().locator('#settings-sidebar a[data-target=desktop]').waitFor();await openReset();near(await progress(frame().locator('#reset')),0,'remount starts uncharged');
   await threshold(frame().locator('#reset'),{clicks:6,method:'POST',pathname:'/api/reset-data'});
   await frame().locator('#reset-result[data-state=accepted]').waitFor();assert.match(await frame().locator('#reset-result').innerText(),/QA169-MOCK-BACKUP/);
   assert.equal(await page.locator('.destructive-window-wash').count(),0,'completion clears the host tint');

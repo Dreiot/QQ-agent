@@ -63,8 +63,8 @@ try{
       const input=dialog.locator('input[name=on]'),before=await dialog.boundingBox();await input.uncheck();await input.check();
       const after=await dialog.boundingBox();assert.ok(Math.abs(before.height-after.height)<.5,'Boolean settings do not stretch the dialog');
       await dialog.getByRole('button',{name:'取消',exact:true}).click();
-      await card.getByRole('button',{name:'热更新',exact:true}).click();
-      await card.evaluate(async root=>{for(let i=0;i<240;i++){await new Promise(requestAnimationFrame);if([...root.querySelectorAll('button')].some(b=>b.textContent==='热更新'&&!b.disabled))return;}throw Error('Hot reload did not complete');});await settle();
+      await card.getByRole('button',{name:'重新加载',exact:true}).click();
+      await card.evaluate(async root=>{for(let i=0;i<240;i++){await new Promise(requestAnimationFrame);if([...root.querySelectorAll('button')].some(b=>b.textContent==='重新加载'&&!b.disabled))return;}throw Error('Hot reload did not complete');});await settle();
     }
     if(evidence)await page.screenshot({path:path.join(evidence,`${panel}-${width}.png`),fullPage:true});
   }

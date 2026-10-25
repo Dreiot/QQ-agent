@@ -18,6 +18,7 @@ function fixture() {
   const media = new Events(); media.matches = false;
   let time = 1000, frameRequests = 0;
   const view = new Events(); view.matchMedia = () => media;
+  const tokens=new Map();view.getComputedStyle=()=>({getPropertyValue:name=>tokens.get(name)||''});
   view.performance = { now: () => time };
   view.requestAnimationFrame = () => { frameRequests++; throw new Error('Motion must not create a permanent frame loop'); };
   const observers = [];
@@ -28,7 +29,7 @@ function fixture() {
     change(records) { if (!this.disconnected) this.callback(records); }
   };
   const doc = new Events(); doc.nodeType = 9; doc.defaultView = view; doc.visibilityState = 'visible'; doc.readyState = 'complete';
-  doc.initial = []; doc.querySelectorAll = () => doc.initial; doc.documentElement = {};
+  doc.initial = []; doc.querySelectorAll = () => doc.initial; doc.documentElement = {};doc.body={dataset:{}};
   class Node extends Events {
     constructor({ tag = 'DIV', className = '', id = '', parent = null, motion = '' } = {}) {
       super(); this.nodeType = 1; this.tagName = tag; this.ownerDocument = doc; this.className = className;
@@ -64,7 +65,7 @@ function fixture() {
     }
   }
   const change = records => observers.filter(observer => !observer.disconnected).forEach(observer => observer.change(records));
-  return { doc, view, media, Node, observers, change, advance: amount => { time += amount; }, frameRequests: () => frameRequests };
+  return { doc, view, media, Node, tokens, observers, change, advance: amount => { time += amount; }, frameRequests: () => frameRequests };
 }
 
 const childList = (target, addedNodes = [], removedNodes = []) => ({ type: 'childList', target, addedNodes, removedNodes });
@@ -77,7 +78,7 @@ assert.equal(animateMount(null), null);
   env.doc.initial = Array.from({ length: 30 }, () => new env.Node());
   const dispose = installMotion(env.doc);
   assert.equal(installMotion(env.doc), dispose, 'Installing twice is idempotent');
-  assert.equal(env.observers.length, 1);
+  assert.equal(env.observers.length, 2, 'One subtree observer and one bounded theme-root observer');
   assert.equal(env.doc.initial.reduce((sum, node) => sum + node.animations.length, 0), 12, 'Large first paints have a bounded animation budget');
   for (const node of env.doc.initial.slice(0, 12)) {
     const animation = node.animations[0];
@@ -181,6 +182,22 @@ console.log('✓ 137 native dialog, details and tabs preserve semantics; selecti
   assert.equal(env.frameRequests(), 0);
 }
 console.log('✓ 137 reduced motion, background visibility and one-off animation cleanup');
+
+{
+  const env=fixture();env.tokens.set('--motion-duration-factor','2');env.tokens.set('--motion-scale','1.75');
+  const first=animateMount(new env.Node(),{delay:20});
+  assert.equal(first.options.duration,440);assert.equal(first.options.delay,40);assert.match(first.keyframes[0].transform,/14px/);
+  env.tokens.set('--motion-duration-factor','.5');env.tokens.set('--motion-scale','.5');env.change([attribute(env.doc.documentElement,'style')]);
+  assert.equal(first.cancelled,true,'changing visual preferences cancels an old entrance safely');
+  const next=animateMount(new env.Node());assert.equal(next.options.duration,110);assert.match(next.keyframes[0].transform,/4px/);
+  env.doc.body.dataset.interfaceMotion='off';env.change([attribute(env.doc.body,'data-interface-motion')]);
+  assert.equal(next.cancelled,true);assert.equal(animateMount(new env.Node()),null,'the interface switch disables WAAPI entrances');
+  env.doc.body.dataset.interfaceMotion='on';env.tokens.set('--motion-scale','0');
+  const fade=animateMount(new env.Node());assert.match(fade.keyframes[0].transform,/0px/,'zero motion amplitude retains only the non-spatial fade');
+  env.media.matches=true;env.media.emit('change');assert.equal(fade.cancelled,true);assert.equal(animateMount(new env.Node()),null,'system reduced motion takes priority');
+  await Promise.resolve();assert.equal(env.doc.count()+env.media.count(),0);assert.ok(env.observers.every(observer=>observer.disconnected));
+}
+console.log('✓ 137 personalized duration and displacement, live cancellation, interface off and reduced-motion priority');
 
 {
   assert.equal(readableAccentInk(DARK_BASE.accent, DARK_BASE.accentInk), DARK_BASE.accentInk);

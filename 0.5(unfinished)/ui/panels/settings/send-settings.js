@@ -25,7 +25,7 @@ export const SEND_SETTING_HELP = {
 };
 
 export const PROACTIVE_SETTING_HELP = {
-  'proactive.probability':'每次定时检查时，尝试主动开话题的概率。0.25 就是 25%。越高，越容易尝试主动发言；越低，越安静。0 表示不尝试，1 表示每次都尝试，但仍需有符合条件的允许群聊，且机器人未暂停、群聊没有待处理消息等。',
+  'proactive.probability':'每次检查尝试发起话题的概率。25% 表示平均约四次检查尝试一次；仍需满足闲置、准入和运行状态条件。',
   'proactive.idleThresholdMs':'群里至少安静多少秒，才可能成为主动开话题的对象。越大，需要冷场越久，主动打扰通常越少；越小，更早获得发言机会。最少 300 秒（5 分钟），并非安静满这个时间就一定会发言。',
   'proactive.checkIntervalMinMs':'两次主动检查之间，随机等待时间的下限，单位是秒。越大，检查之间至少等得越久；越小，可能检查得更频繁。最少 60 秒，应不大于最长检查间隔。检查不等于一定发言。',
   'proactive.checkIntervalMaxMs':'两次主动检查之间，随机等待时间的上限，单位是秒。越大，可能等得越久才再次检查；越小，最长等待越短。应不小于最短检查间隔；如果填得更小，运行时会按最短间隔处理。检查不等于一定发言。',
@@ -70,7 +70,7 @@ export function mountCompactSettings(host,{help:helpText,id}){
     const row=doc.createElement('div'),name=doc.createElement('div'),label=doc.createElement('label'),help=doc.createElement('button');
     row.className='send-setting-row';row.dataset.sendSetting=path;name.className='send-setting-name';label.className='send-setting-label';label.htmlFor=input.id;
     title.id=`send-label-${input.id}`;input.setAttribute('aria-labelledby',title.id);label.append(title);
-    help.type='button';help.className='send-setting-help';help.textContent='!';help.dataset.motion='off';help.dataset.helpPath=path;help.dataset.helpTitle=title.textContent;help.setAttribute('aria-label',`了解${title.textContent}`);
+    help.type='button';help.className='send-setting-help';help.textContent='?';help.dataset.motion='off';help.dataset.helpPath=path;help.dataset.helpTitle=title.textContent;help.setAttribute('aria-label',`了解${title.textContent}`);
     name.append(help,label);field.before(row);field.classList.add('send-setting-control');row.append(name,field);
     listen(help,'pointerenter',()=>show(help));listen(help,'pointerleave',deferHide);listen(help,'focus',()=>show(help));listen(help,'blur',deferHide);listen(help,'click',()=>show(help));
   }

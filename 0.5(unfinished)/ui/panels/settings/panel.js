@@ -1,6 +1,10 @@
-import { request, onShellEvent, onLeave, onBeforeLeave, getViewState, onViewStateSnapshot, consoleUpdate, applyHostTheme, openConsoleTokenManager, settingsSaveAvailable, settingsSaveState, saveSettings } from '/panels/panel-client.js';
+import { request, onShellEvent, onLeave, onBeforeLeave, getViewState, onViewStateSnapshot, consoleUpdate, applyHostTheme, openConsoleTokenManager, openLocalProtocolPage, settingsSaveAvailable, settingsSaveState, saveSettings, contentReady } from '/panels/panel-client.js';
+import {createLiveRefresh} from '../live-refresh.js';
+import {currentAccountScope} from '../account-scope.js';
 import { $, button, destructiveButton, bindDestructiveAction, clear, confirmAction, row, text } from '../ui.js';
-import { PRESETS, DEFAULT_THEME, LIGHT_BASE, DARK_BASE, normalizeTheme, migrateUikit, resolveScheme, saveCustom, deleteCustom, renameCustom } from '../theme.js';
+import { PRESETS, DEFAULT_THEME, LIGHT_BASE, DARK_BASE, normalizeTheme, migrateUikit, resolveScheme, saveCustom, deleteCustom, renameCustom, PERSONALIZATION_FIELDS } from '../theme.js';
+import {createIcon} from '../icons.js';
+import {renderAppearanceControls} from './appearance-controls.js';
 import { FormState, getPath } from './form-state.js';
 import { createBackgroundEditor } from './bg-editor.js';
 import { editGroupResponse, editFallbacks, editModelPrices, editSearchProvider } from './spec-editors.js';
@@ -28,6 +32,21 @@ import { createBlocklistRawEditor } from './blocklist-raw.js';
 import {createSettingsSaveLifecycle} from './save-lifecycle.js';
 import {composeSettingsStructure,SETTINGS_SECTIONS,canonicalSettingsSection} from './structure.js';
 import {searchSourcePresets} from './search-sources.js';
+import {createAutoSave,flushAutoSaves,hasAutoSaves,mountSaveFeedback,saveFeedback} from './auto-save.js';
+import {mountSwitchCards} from './switch-cards.js';
+import {organizeAppearance} from './appearance-layout.js';
+import {mountChoiceCards} from './choice-cards.js';
+import {installDisposableDialog} from '../dialog-lifecycle.js';
+import {createLocalProtocols} from './local-protocols.js';
+
+const disposeSaveFeedback=mountSaveFeedback();
+const disposeSwitchCards=mountSwitchCards();
+const localProtocols=createLocalProtocols({request,subscribe:onShellEvent,openPage:openLocalProtocolPage,beforeStart:saveAll,beforeDisconnect:async()=>{await flushAutoSaves();await saveAll();},onConnected:()=>{void load();}});
+onLeave(()=>localProtocols.dispose());
+window.addEventListener('pagehide',()=>localProtocols.dispose(),{once:true});
+$('#reload').replaceChildren(createIcon('refresh',{size:18}));
+let appearanceChoices=[];onLeave(()=>appearanceChoices.splice(0).forEach(dispose=>dispose()));
+onLeave(()=>{disposeSwitchCards();disposeSaveFeedback();});
 
 const themePreview = createThemePreviewQueue(applyHostTheme);
 onLeave(() => { backgroundUploadLeaving = true; ++backgroundUploadVersion; void themePreview.flush().catch(() => {}); });
@@ -37,9 +56,14 @@ const form = new FormState();
 const status = $('#status');
 const fieldsHost = $('#fields');
 const invalid = new Map();
-const saveLifecycle=createSettingsSaveLifecycle({form,invalid,sendState:settingsSaveState,saveRequest:saveSettings,request,extraGuard:()=>resetAccepted?'':providerManager?.dirty?'渠道修改尚未保存；请先保存或修正输入':settingsStructure?.searchDirty?'搜索源修改尚未保存；请保存或关闭编辑窗口':settingsStructure?.personaDirty?'人设修改尚未保存；请保存或关闭人设管理窗口':settingsStructure?.activityDirty?'活跃设置有未保存草稿；请保存或取消':(blocklistRaw.dirty||blocklistRaw.invalid)?'高级原始编辑尚未手动保存；请保存或放弃后再离开':'',paused:()=>!resetAccepted&&(resetting||resetPreparing)?'正在备份并提交重置；请等待结果后再离开':'',onError:error=>report(error.message,true)});
+const saveLifecycle=createSettingsSaveLifecycle({form,invalid,sendState:settingsSaveState,saveRequest:saveSettings,request,extraGuard:()=>resetAccepted?'':hasAutoSaves()?'正在保存设置':providerManager?.dirty?'渠道修改尚未保存；请先保存或修正输入':settingsStructure?.searchDirty?'搜索源修改尚未保存；请保存或关闭编辑窗口':settingsStructure?.personaDirty?'人设修改尚未保存；请保存或关闭人设管理窗口':settingsStructure?.activityDirty?'活跃设置有未保存草稿；请保存或取消':(blocklistRaw.dirty||blocklistRaw.invalid)?'高级原始编辑尚未手动保存；请保存或放弃后再离开':'',paused:()=>!resetAccepted&&(resetting||resetPreparing)?'正在备份并提交重置；请等待结果后再离开':'',onError:error=>report(error.message,true)});
 const saveLifecycleReady=settingsSaveAvailable().then(value=>saveLifecycle.enable(value));
+const syncAutomaticState=()=>saveLifecycle.sync();
+document.addEventListener('settings-autosave-state',syncAutomaticState);
+onLeave(()=>document.removeEventListener('settings-autosave-state',syncAutomaticState));
 let saveTimer = null;
+let previousAppearance=null;
+let refreshPalette=()=>{};
 let disposeUpdates=()=>{};
 onLeave(()=>disposeUpdates());
 let disposePriceTable=()=>{};
@@ -129,10 +153,15 @@ let visionResults = {}, visionReadVersion = 0, visionError = '';
 let lastSavedAt = '';
 const sections = new Map();
 let settingsStructure=null;
+let pendingConnectQQ=null;
+function openAccountConnection(connectQQ){
+  if(!settingsStructure||loading){pendingConnectQQ=connectQQ;return;}
+  void localProtocols.openLogin(connectQQ===true?undefined:connectQQ).catch(error=>report(error.message,true));
+}
 let settingsReadDeferred=false;
 // The appearance editor already reconciles remote changes with upload/picker
 // generations. Keep that live path, including remote removal of a background.
-const protectedSettingsDialog=()=>document.querySelector('dialog[data-settings-editor][open]:not([data-settings-editor="appearance"])');
+const protectedSettingsDialog=()=>document.querySelector('dialog[open]:not([data-settings-editor="appearance"])');
 const navigationSections=()=>settingsStructure?.sections||sections;
 onLeave(()=>{settingsReadDeferred=false;settingsStructure?.dispose();});
 window.addEventListener('pagehide',()=>settingsStructure?.dispose(),{once:true});
@@ -169,11 +198,15 @@ function safeJson(value, field) {
 }
 function queue(field, value, immediate = false, replace = false) {
   if (resetting || resetPreparing || resetAccepted) return;
+  if(field.startsWith('ui.uikit')&&!previousAppearance)previousAppearance=migrateUikit(form.value('ui.uikit'));
+  if(field.startsWith('ui.uikit')){const undo=document.querySelector('[aria-label="撤销本次外观调整"]');if(undo)undo.disabled=false;}
   form.set(field, value, { replace });
+  if(field.startsWith('ui.uikit'))refreshPalette();
   settingsStructure?.refresh(field);
   costView?.refresh();
   saveLifecycle.sync();
   report('有未保存改动');
+  saveFeedback('saving');
   clearTimeout(saveTimer);
   if (immediate && !reloadConfirmation) void save().catch((error) => report(error.message, true));
   else scheduleSave();
@@ -209,13 +242,15 @@ async function save() {
         ++saveCommitRevision;
         committed = true;
         lastSavedAt = new Date().toLocaleTimeString('zh-CN');
-        report(form.dirty ? '正在保存后续改动…' : `已保存 · ${lastSavedAt}`);
+        report(form.dirty ? '保存中…' : '');
         // Never rebuild the active form: input typed during the request belongs to a newer version.
         updateSecretStates();
       }
     } finally { if (committed) void refreshToolAvailability(); }
   })();
-  try { await saving; } finally { saving = null; }
+  try { await saving;if(!form.dirty&&!hasAutoSaves())saveFeedback('saved'); }
+  catch(error){saveFeedback('error',`未保存 · ${error.message}`,()=>saveAll().catch(error=>report(error.message,true)));throw error;}
+  finally { saving = null;if(settingsReadDeferred)liveSettings.request(); }
 }
 async function guarded(task, target = status) {
   try { return await task(); } catch (error) { text(target, error.message || '操作失败'); target.classList.add('field-error'); return null; }
@@ -262,11 +297,10 @@ function group(parent, label, opts = {}) {
   return fields;
 }
 
-/** 状态卡文字状态：开启 / 关闭（颜色之外的第二信道，不能只靠亮暗传达）。 */
+/** The native checkbox exposes checked state; cards provide the visual mark. */
 function switchPill(input) {
   const pill = document.createElement('span'); pill.className = 'switch-state';
-  const sync = () => { pill.textContent = input.checked ? '开启' : '关闭'; };
-  input.addEventListener('change', sync); sync();
+  pill.setAttribute('aria-hidden','true');
   return pill;
 }
 
@@ -306,7 +340,7 @@ function buildSectionNav() {
       const bar = document.createElement('span'); bar.className = 'channel-bar';
       mark.append(led, bar);
       const body = document.createElement('span'); body.className = 'channel-text';
-      const name = document.createElement('span'); name.className = 'channel-title'; text(name, entry.title);
+      const name = document.createElement('span'); name.className = 'channel-title';name.append(createIcon(({onebot:'link',models:'model',access:'chats',persona:'community',chat:'chats',memory:'memory',search:'search',tools:'skills',appearance:'contrast',security:'shield',desktop:'panel'})[id]||'panel',{size:18}),document.createTextNode(entry.title));
       const desc = document.createElement('span'); desc.className = 'channel-desc';
       text(desc, entry.description || '');
       body.append(name, desc);
@@ -314,7 +348,7 @@ function buildSectionNav() {
       no.textContent = String(SECTION_ORDER.indexOf(id) + 1).padStart(2, '0');
       link.append(mark, body, no);
       if (!matchesFilter(id, items)) link.classList.add('is-hidden');
-      if (id === activeSection) link.classList.add('is-active');
+      if (id === activeSection) {link.classList.add('is-active');link.setAttribute('aria-current','page');}
       link.addEventListener('click', (event) => { event.preventDefault(); selectSection(id); });
       groupEl.append(link);
     }
@@ -322,14 +356,50 @@ function buildSectionNav() {
   }
   const emptyBox = $('#settings-sidebar-empty');
   if (emptyBox) emptyBox.hidden = sidebar.children.length > 0;
+  renderSettingSearch();
   applySectionVisibility();
+}
+
+function settingSearchEntries(){
+  const entries=[];
+  for(const [id,section] of navigationSections()){
+    entries.push({id,section:section.title,name:section.title,target:section.card,search:section.title.toLowerCase()});
+    const seen=new Set();
+    for(const target of section.card.querySelectorAll('.setting-field[data-path],.setting-field:has([data-config-path]),[data-settings-open],.settings-fold-title,.settings-compact-group>summary')){
+      if(target.closest('[data-settings-search-exclude]'))continue;
+      const label=target.querySelector('.field-title')?.textContent||target.closest('.send-setting-row')?.querySelector('.field-title')?.textContent||target.textContent;
+      const name=String(label||'').trim();if(!name||seen.has(name))continue;seen.add(name);
+      entries.push({id,section:section.title,name,target,search:`${name} ${target.dataset.path||''}`.toLowerCase()});
+    }
+  }
+  return entries;
+}
+function renderSettingSearch(){
+  const host=$('#settings-search-results');if(!host)return;host.replaceChildren();host.hidden=!sectionFilter;
+  $('#settings-sidebar').hidden=!!sectionFilter;if(!sectionFilter)return;
+  const matches=settingSearchEntries().filter(item=>item.search.includes(sectionFilter));
+  $('#settings-sidebar-empty').hidden=matches.length>0;
+  $('#settings-sidebar-empty').textContent='没有找到设置';
+  for(const item of matches){
+    const result=document.createElement('button');result.type='button';result.className='settings-search-result';
+    const title=document.createElement('span'),category=document.createElement('small');title.textContent=item.name;category.textContent=item.section;result.append(title,category);
+    result.addEventListener('click',()=>{
+      sectionFilter='';$('#settings-filter').value='';activeSection=item.id;buildSectionNav();
+      const parking=item.target.closest('.settings-editor-parking');parking?.parentElement.querySelector('[data-settings-open]')?.click();
+      for(let parent=item.target.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
+      const target=item.target.getClientRects().length?item.target:navigationSections().get(item.id).card;
+      target.scrollIntoView({block:'center'});target.classList.add('settings-focus-target');setTimeout(()=>target.classList.remove('settings-focus-target'),2000);
+      const selected=target.querySelector('[role=radio][aria-checked=true]:not(:disabled)');
+      (selected||[...target.querySelectorAll('input:not(:disabled),select:not(:disabled),textarea:not(:disabled),button:not(:disabled)')].find(control=>control.getClientRects().length))?.focus({preventScroll:true});
+    });host.append(result);
+  }
 }
 
 /** 分区是否命中筛选（标题或说明含关键词，大小写不敏感）。 */
 function matchesFilter(id, items) {
   if (!sectionFilter) return true;
   const entry = navigationSections().get(id);
-  const haystack = `${entry?.title ?? ''} ${entry?.description ?? ''} ${id}`.toLowerCase();
+  const haystack = `${entry?.title ?? ''} ${entry?.description ?? ''} ${id} ${entry?.card.textContent||''}`.toLowerCase();
   return haystack.includes(sectionFilter);
 }
 
@@ -343,7 +413,8 @@ function applySectionVisibility() {
     if (led) led.className = `led ${hidden ? 'is-idle' : 'is-ok'}`;
   }
   for (const link of document.querySelectorAll('#settings-sidebar a[data-target]')) {
-    link.classList.toggle('is-active', link.dataset.target === activeSection);
+    const active=link.dataset.target === activeSection;link.classList.toggle('is-active',active);
+    if(active)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
   }
 }
 
@@ -356,7 +427,7 @@ function selectSection(id) {
   // 切换分区不重建 DOM，防抖窗口内的输入不会被吹掉，因此不需要 flush。
   const content = document.querySelector('.settings-content');
   if (content) content.scrollTop = 0;
-}const fieldIds = { 'api.baseUrl': 'base-url', 'api.model': 'model', 'ui.refreshMs': 'refresh-ms', 'api.apiKey': 'api-key' };
+}const fieldIds = { 'api.baseUrl': 'base-url', 'api.model': 'model', 'api.apiKey': 'api-key' };
 function field(parent, path, label, type = 'text', opts = {}) {
   const wrap = document.createElement('label'); wrap.className = `setting-field${type === 'textarea' || type === 'json' ? ' full' : ''}`;
   wrap.dataset.path = path;
@@ -382,7 +453,7 @@ function field(parent, path, label, type = 'text', opts = {}) {
   else if (type === 'list') input.value = Array.isArray(value) ? value.join('，') : '';
   else if (type === 'number' && opts.valueScale && value != null) input.value = String(value / opts.valueScale);
   else input.value = String(value ?? '');
-  const hint = document.createElement('small'); hint.className = 'field-hint'; text(hint, opts.hint || '');hint.hidden=!opts.hint;
+  const hint = document.createElement('small'); hint.className = 'field-hint'; text(hint, opts.hint || '');hint.hidden=true;if(opts.hint){title.title=opts.hint;input.setAttribute('aria-description',opts.hint);}
   const error = document.createElement('small'); error.className = 'field-error'; error.hidden = true;
   input.addEventListener(type === 'select' || type === 'checkbox' ? 'change' : 'input', () => {
     try {
@@ -392,7 +463,7 @@ function field(parent, path, label, type = 'text', opts = {}) {
         next = Number(input.value);
         if (!input.value.trim() || !Number.isFinite(next)) throw new Error(`${label}必须是有效数字`);
         if (opts.min !== undefined && next < opts.min || opts.max !== undefined && next > opts.max) throw new Error(`${label}超出允许范围`);
-        if (opts.valueScale) { next = Math.round(next * opts.valueScale); if (!Number.isFinite(next)) throw new Error(`${label}必须是有效数字`); }
+        if (opts.valueScale) { next = opts.valueScale>=1?Math.round(next * opts.valueScale):Number((next * opts.valueScale).toFixed(8)); if (!Number.isFinite(next)) throw new Error(`${label}必须是有效数字`); }
       } else if (type === 'json') next = safeJson(input.value, path);
       else if (type === 'list') {
         next = [...new Set(input.value.split(/[，,\s]+/).map((item) => item.trim()).filter(Boolean))];
@@ -419,10 +490,13 @@ function secretField(parent, path, label, readEndpoint = null, query = undefined
   const line = document.createElement('div'); line.className = 'secret-controls';
   const input = document.createElement('input'); input.type = 'password'; input.autocomplete = 'new-password'; input.id = fieldIds[path] || `secret-${path.replaceAll('.', '-')}`; input.placeholder = '输入新密钥；空白保留已有值';
   const reveal = document.createElement('div'); reveal.className = 'secret-revealed';
-  line.append(input, button('写入', async () => {
-    if (!input.value.trim()) throw new Error('请输入要写入的新密钥');
-    const value = input.value.trim(); form.set(path, value); await save(); input.value = ''; text(reveal, '');
-  }), destructiveButton('清除', async () => { form.set(path, ''); await save(); input.value = ''; text(reveal, ''); }, {
+  const credentialSave=createAutoSave({root:wrap,dirty:()=>!!input.value.trim(),save:async()=>{
+    const value=input.value.trim();if(!value)return;
+    form.set(path,value);await save();if(input.value.trim()===value)input.value='';text(reveal,'');
+  }});
+  input.addEventListener('input',()=>credentialSave.schedule());
+  onLeave(()=>credentialSave.dispose());
+  line.append(input, destructiveButton('清除', async () => { input.value='';form.set(path, ''); await save(); text(reveal, ''); }, {
     target: () => wrap, clicks: 3, key: () => path,
     impact: `将清除 ${label}，依赖它的连接会失效。`,
   }));
@@ -493,7 +567,7 @@ async function listChoices(kind) {
       if (!isCurrent()) throw new Error('当前设置已改变，请关闭后重开选择器');
       invalid.delete(path); control.removeAttribute('aria-invalid'); const error = control.closest('.setting-field')?.querySelector('.field-error'); if (error) error.hidden = true;
       queue(path, selected);if(policy?.changed)queue(modePath,policy.allowAll);control.value = selected.join('，'); await save();
-    }, onError: error => { if (!disposed) report(error.message, true); }, onSaved: () => { if (isCurrent()) render(); },
+    }, onError: error => { if (!disposed) report(error.message, true); }, onSaved: () => { if (isCurrent()) settingsStructure?.refresh(); },
   });
 }
 function editor(parent, title) { const box = document.createElement('div'); box.className = 'settings-editor'; const h = document.createElement('h4'); text(h, title); const fields = document.createElement('div'); fields.className = 'settings-fields'; box.append(h, fields); parent.append(box); return { box, fields }; }
@@ -629,7 +703,8 @@ function updateToolAvailability(error = '') {
   const byId = new Map(availability.map(item => [item.id, item]));
   for (const reason of fieldsHost.querySelectorAll('[data-tool-availability-id]')) {
     const state = byId.get(reason.dataset.toolAvailabilityId);
-    const message = error || (state?.enabled ? '当前可用' : state?.reason || '不可用');
+    const message = error || (state?.enabled ? '' : state?.reason || '暂不可用');
+    reason.dataset.available=String(state?.enabled===true);reason.closest('label').dataset.available=String(state?.enabled===true);
     if (reason.textContent !== message) text(reason, message);
   }
 }
@@ -657,7 +732,7 @@ function renderTools() {
     const state = availability.find((item) => item.id === tool.id); const label = document.createElement('label'); label.className = 'tool-toggle'; const input = document.createElement('input'); input.type = 'checkbox';
     input.checked = form.value('tools.overrides')?.[tool.id] ?? tool.defaultEnabled !== false;
     input.addEventListener('change', () => queueToolOverride(tool.id, input.checked));
-    const title = document.createElement('span'); text(title, `${tool.name} · ${tool.id}`); const reason = document.createElement('small'); reason.dataset.toolAvailabilityId = tool.id; text(reason, state?.enabled ? '当前可用' : state?.reason || '不可用');
+    const title = document.createElement('span'); text(title, tool.name);label.title=tool.id; const reason = document.createElement('small'); reason.dataset.toolAvailabilityId = tool.id;reason.className='tool-runtime-state';reason.dataset.available=String(state?.enabled===true);label.dataset.available=String(state?.enabled===true);text(reason, state?.enabled ? '' : state?.reason || '暂不可用');
     label.classList.add('is-switch');
     label.append(input, title, reason, switchPill(input)); host.append(label);
   }
@@ -713,7 +788,7 @@ function render() {
     const sampling = group(api.fields, '采样与预算');
     field(sampling, 'api.temperature', '温度', 'number', { min: 0, max: 2, step: 0.1 });
     field(sampling, 'api.maxRounds', '最大工具轮数', 'number', { min: 1, max: 100 });
-    field(sampling, 'api.timeoutMs', '请求超时（毫秒）', 'number', { min: 5000 });
+    field(sampling, 'api.timeoutMs', '等待模型回复（秒）', 'number', { min: 5, valueScale:1000 });
     field(sampling, 'api.fallbackModels', '备选模型（JSON 数组）', 'json', { default: [], hint: '[{"provider":"渠道ID","model":"模型ID"}]，按顺序降级。' });
     const thinking = group(api.fields, '思考模式');
     field(thinking, 'api.thinkingMode', '思考模式', 'select', { options: [['auto','自动'],['on','开启'],['off','关闭']] });
@@ -798,11 +873,13 @@ function render() {
     blocklistRaw.mount(deny);
     deny.append(button('按群选择屏蔽成员',()=>blocklistMembers.open()));
     const link = group(access.fields, '协议端连接');
-    field(link, 'onebot.wsUrl', 'OneBot WebSocket 地址', 'text', { hint: '填写已由你安装并启动的协议端所提供的正向 WebSocket 事件地址。' });
-    field(link, 'onebot.httpUrl', 'OneBot HTTP 地址', 'text', { hint: '填写同一账号的 HTTP API 地址，用于发送消息和查询。' });
+    const localHost=document.createElement('div');localHost.className='full';link.append(localHost);localProtocols.mount(localHost);
+    const manualHead=document.createElement('div');manualHead.className='full local-protocol-manual-head';const manualTitle=document.createElement('h4');manualTitle.className='local-protocol-manual-title';manualTitle.textContent='已有服务';manualHead.append(manualTitle,button('连接已运行的协议端',async()=>{await saveAll();localProtocols.openExisting();}));link.append(manualHead);
+    field(link, 'onebot.wsUrl', 'OneBot WebSocket 地址', 'text', { hint: '协议端提供的正向 WebSocket 事件地址。' });
+    field(link, 'onebot.httpUrl', 'OneBot HTTP 地址', 'text', { hint: '同一账号的 HTTP API 地址，用于发送消息和查询。' });
     secretField(link, 'onebot.accessToken', 'WebSocket 令牌', '/api/onebot-token', { which: 'ws' });
     secretField(link, 'onebot.httpAccessToken', 'HTTP 令牌', '/api/onebot-token', { which: 'http' });
-    const tokenHint = document.createElement('p'); tokenHint.className = 'field-hint'; tokenHint.textContent = '协议端由你独立安装、启动和管理。本应用不会下载、启动或读取协议端的本地账号配置。输入令牌后点击“写入”保存；HTTP 和 WebSocket 令牌请分别核对。'; link.append(tokenHint);
+    const tokenHint = document.createElement('p'); tokenHint.className = 'field-hint'; tokenHint.textContent = '已有协议端也可手动连接。填写地址与令牌后自动保存。'; link.append(tokenHint);
   }
 
   const send = section('send', '发送与消息存档', '同会话串行、成功后去重记账。限频用于防刷屏，不应设得过大。');
@@ -820,43 +897,43 @@ function render() {
   }
 
   const active = section('active', '主动话题与活跃期', '默认关闭主动发言。启用后只有白名单内闲置会话会成为候选。');
-  field(active.fields, 'proactive.enabled', '启用主动开话题', 'checkbox');
-  field(active.fields, 'proactive.probability', '每次检查的主动概率（0~1）', 'number', { min: 0, max: 1, step: 0.01 });
+  field(active.fields, 'proactive.enabled', '主动发起聊天', 'checkbox');
+  field(active.fields, 'proactive.probability', '主动发言概率（%）', 'number', { min: 0, max: 100, step: 1, valueScale:0.01 });
   field(active.fields, 'proactive.idleThresholdMs', '冷场阈值（秒）', 'number', { min: 300, step: 'any', valueScale: 1000 });
   field(active.fields, 'proactive.checkIntervalMinMs', '最短检查间隔（秒）', 'number', { min: 60, step: 'any', valueScale: 1000 });
   field(active.fields, 'proactive.checkIntervalMaxMs', '最长检查间隔（秒）', 'number', { min: 60, step: 'any', valueScale: 1000 });
   field(active.fields, 'chatActive.enabled', '启用活跃话题持续响应', 'checkbox'); field(active.fields, 'chatActive.ttlMinutes', '活跃期有效时长（分钟）', 'number', { min: 1 });
 
-  const memory = section('memory', '记忆与表情', '群友印象保存在本地。表情收藏成功必须是 QQ 账号库与备注写入都确认成功。');
+  const memory = section('memory', '记忆与表情', '群友印象和表情库保存在本地。');
   {
     const consolidate = group(memory.fields, '记忆整理');
-    field(consolidate, 'memory.consolidateEnabled', '自动定期记忆整理', 'checkbox');
-    field(consolidate, 'memory.consolidateMinIntervalMs', '整理冷却（分钟）', 'number', { min: 30, step: 'any', valueScale: 60000 });
-    field(consolidate, 'memory.useChatModel', '整理使用聊天主模型', 'checkbox');
+    field(consolidate, 'memory.consolidateEnabled', '自动整理记忆', 'checkbox');
+    field(consolidate, 'memory.consolidateMinIntervalMs', '最短整理间隔（分钟）', 'number', { min: 30, step: 'any', valueScale: 60000 });
+    field(consolidate, 'memory.useChatModel', '共用聊天模型', 'checkbox');
     field(consolidate, 'memory.provider', '整理专用渠道 ID');
     field(consolidate, 'memory.model', '整理专用模型 ID');
     consolidate.append(button('选择整理专用模型', () => chooseConfiguredModel('memory')));
     const tuning = group(memory.fields, '整理阈值（高级）', { fold: true, key: 'memory-tuning' });
-    field(tuning, 'memory.maxImpressionsPerMember', '每个成员整理后印象条数', 'number', { min: 2 });
-    field(tuning, 'memory.consolidateMinImpressions', '全群整理阈值', 'number', { min: 0 });
-    field(tuning, 'memory.discoverMinMessages', '自动发现成员最少发言条数', 'number', { min: 1 });
+    field(tuning, 'memory.maxImpressionsPerMember', '每人保留印象（条）', 'number', { min: 2 });
+    field(tuning, 'memory.consolidateMinImpressions', '全群印象阈值（条）', 'number', { min: 0, hint:'群内印象总数超过此值，或某成员印象超过保留上限时触发整理。' });
+    field(tuning, 'memory.discoverMinMessages', '发现成员需发言（条）', 'number', { min: 1 });
     field(tuning, 'memory.discoverMaxMembers', '单次自动发现人数（0 关闭）', 'number', { min: 0 });
     const sticker = group(memory.fields, '表情');
-    field(sticker, 'sticker.enabled', '启用表情上下文', 'checkbox');
-    field(sticker, 'sticker.promptMaxStickers', '提示词表情条数', 'number', { min: 1, max: 30 });
-    field(sticker, 'sticker.collectEnabled', '启用表情收藏', 'checkbox');
+    field(sticker, 'sticker.enabled', '让模型参考表情库', 'checkbox');
+    field(sticker, 'sticker.promptMaxStickers', '提供给模型的表情数', 'number', { min: 1, max: 30 });
+    field(sticker, 'sticker.collectEnabled', '自动收藏表情', 'checkbox');
     field(sticker, 'sticker.maxCollectPerHour', '每小时自动收藏上限', 'number', { min: 0 });
     field(sticker, 'sticker.encourage', '表情使用积极程度', 'select', { options: [[0,'不鼓励'],[1,'偶尔'],[2,'较积极'],[3,'表情包爱好者']] });
   }
 
   const toolSection = section('tools', '工具与能力', '开关控制模型能看到的工具；不可用原因来自实际运行时，启用不会绕过权限或缺失能力。');
-  field(toolSection.fields, 'tools.enabled', '启用工具系统', 'checkbox'); field(toolSection.fields, 'tools.crossChatSend', '允许跨会话发言（社交敏感）', 'checkbox');
+  field(toolSection.fields, 'tools.enabled', '模型使用工具', 'checkbox'); field(toolSection.fields, 'tools.crossChatSend', '跨会话发言', 'checkbox');
   for (const [id, title] of [['messaging','消息'],['sticker','表情'],['query','查询'],['memory','记忆'],['web','联网'],['knowledge','知识库'],['media','媒体'],['system','系统']]) field(toolSection.fields, `tools.categories.${id}`, `${title}类工具`, 'checkbox');
   const toolHost = document.createElement('div'); toolHost.id = 'tool-list'; toolHost.className = 'settings-list'; toolSection.card.append(toolHost); renderTools();
-  const capabilityOut = document.createElement('pre'); capabilityOut.className = 'settings-output'; toolSection.card.append(button('查看能力提供者', async () => output(capabilityOut, await request('GET', '/api/skills/capabilities'))), capabilityOut);
+  const capabilityOut = document.createElement('pre'); capabilityOut.className = 'settings-output'; toolSection.card.append(button('诊断', async () => {const dialog=document.createElement('dialog'),heading=document.createElement('h3'),details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');dialog.className='settings-diagnostic-dialog';heading.textContent='能力诊断';summary.textContent='技术详情';output(pre,await request('GET','/api/skills/capabilities'));details.append(summary,pre);dialog.append(heading,details,button('完成',()=>dialog.close()));installDisposableDialog(dialog);document.body.append(dialog);dialog.showModal();}), capabilityOut);
 
   const search = section('search', '联网搜索', '开启后选择搜索源，并设置搜索结果上限。');
-  field(search.fields, 'webSearch.enabled', '启用联网搜索', 'checkbox'); field(search.fields, 'webSearch.provider', '当前搜索源', 'select', { options: [...searchSourcePresets(path=>form.value(path)), ...searchProviders.map((p) => [`custom:${p.id}`, p.name])] }); field(search.fields, 'webSearch.searchUrl', 'Bing 搜索地址'); field(search.fields, 'webSearch.maxResults', '搜索最终结果上限', 'number', { min: 1, max: 20 });
+  field(search.fields, 'webSearch.enabled', '启用联网搜索', 'checkbox'); field(search.fields, 'webSearch.provider', '当前搜索源', 'select', { options: [...searchSourcePresets(path=>form.value(path)), ...searchProviders.map((p) => [`custom:${p.id}`, p.name])] }); field(search.fields, 'webSearch.searchUrl', 'Bing 搜索地址'); field(search.fields, 'webSearch.maxResults', '结果上限（条）', 'number', { min: 1, max: 20 });
   const defaults = { deepseek: 'https://api.deepseek.com/responses', zhipu: 'https://open.bigmodel.cn/api/paas/v4/web_search', bocha: 'https://api.bochaai.com/v1/web-search', baidu: 'https://qianfan.baidubce.com/v2/ai_search/web_search', metaso: 'https://metaso.cn/api/open/v1/search' };
   {
     const sourceAdvanced = group(search.fields, '各源接口与密钥（高级）', { fold: true, key: 'search-sources' });
@@ -885,15 +962,15 @@ function render() {
     const riskyFields = document.createElement('div'); riskyFields.className = 'settings-fields';
     risky.append(riskyFields);
     security.card.append(risky);
-    field(riskyFields, 'security.allowPrivateImageHosts', '允许内网图片来源（慎开）', 'checkbox');
+    field(riskyFields, 'security.allowPrivateImageHosts', '允许内网图片来源', 'checkbox');
     field(riskyFields, 'security.browseLock.hosts', '允许访问的域名', 'list');
-    field(security.fields, 'security.browseLock.enabled', '启用浏览域名锁定', 'checkbox');
+    field(security.fields, 'security.browseLock.enabled', '仅访问指定域名', 'checkbox');
     field(security.fields, 'security.browseLock.siteSearchUrl', '站内搜索地址');
-    field(security.fields, 'security.imageSend.requirePreview', '发网络图片前必须预览', 'checkbox', { default: true });
-    field(security.fields, 'security.imageSend.maxPerRun', '单轮最多图片数', 'number', { default: 3, min: 1 });
-    field(security.fields, 'security.imageSend.maxPreviewsPerRun', '单轮最多预览数', 'number', { default: 5, min: 1 });
-    field(security.fields, 'security.imageSend.maxBytesMB', '图片下载大小上限（MB）', 'number', { default: 5, min: 1 });
-    field(security.fields, 'telemetry.enabled', '匿名聚合统计上报（不含聊天内容）', 'checkbox', { default: true });
+    field(security.fields, 'security.imageSend.requirePreview', '发送前预览', 'checkbox', { default: true });
+    field(security.fields, 'security.imageSend.maxPerRun', '每轮发送（张）', 'number', { default: 3, min: 1 });
+    field(security.fields, 'security.imageSend.maxPreviewsPerRun', '每轮预览（张）', 'number', { default: 5, min: 1 });
+    field(security.fields, 'security.imageSend.maxBytesMB', '单张大小（MB）', 'number', { default: 5, min: 1 });
+    field(security.fields, 'telemetry.enabled', '匿名使用统计', 'checkbox', { default: true, hint:'不含聊天内容。' });
   }
 
   /** 「界面预设」下拉的选项：两个出厂基准 + 每个自定义方案。
@@ -919,7 +996,11 @@ function render() {
 
   const desktop = section('desktop', '桌面与界面', '监听端口修改需重启；控制台访问令牌保留在宿主，不传入 iframe 面板。');
   desktop.card.append(button('管理控制台访问令牌',async()=>{await save();await openConsoleTokenManager();}));
-  field(desktop.fields, 'server.port', '控制台端口（重启生效）', 'number', { min: 1024, max: 65535 }); field(desktop.fields, 'server.autoStart', '开机自启', 'checkbox'); field(desktop.fields, 'server.closeToTray', '关窗留在托盘', 'checkbox'); field(desktop.fields, 'ui.uikit.mode', '界面预设', 'select', { options: schemeOptions(), hint: '亮色/暗色是出厂基准；在其上改动任何一项后，可用下方组件库里的「另存为」变成一个独立的自定义方案。' }); field(desktop.fields, 'ui.refreshMs', '界面刷新间隔（毫秒）', 'number', { min: 1000, max: 2147483647, hint: '控制状态与会话补偿读取；等待倒计时和整理进度使用独立本地时钟，日志优先实时事件。' }); field(desktop.fields, 'ui.showVision', '显示视觉能力标记', 'checkbox', { default: true, onChange: updateModelVision }); field(desktop.fields, 'extensions.hotReload', '自动监听技能/插件更新', 'checkbox');
+  field(desktop.fields, 'server.port', '控制台端口（重启生效）', 'number', { min: 1024, max: 65535 }); field(desktop.fields, 'server.autoStart', '开机自启', 'checkbox'); field(desktop.fields, 'server.closeToTray', '关窗留在托盘', 'checkbox'); field(desktop.fields, 'ui.uikit.mode', '界面预设', 'select', { options: schemeOptions(), hint: '亮色/暗色是出厂基准；在其上改动任何一项后，可用下方组件库里的「另存为」变成一个独立的自定义方案。' }); field(desktop.fields, 'ui.showVision', '显示视觉能力标记', 'checkbox', { default: true, onChange: updateModelVision }); field(desktop.fields, 'extensions.hotReload', '自动重新加载本地改动', 'checkbox', {hint:'监视本地文件，保存代码后重新加载；在线检查新版是独立流程。'});
+  if(currentAccountScope.id!=='primary'){
+    for(const path of ['server.port','server.autoStart','server.closeToTray']){const input=controls.get(path);if(input){input.disabled=true;input.setAttribute('aria-description','由主账号统一管理');}}
+    const sharedNote=document.createElement('p');sharedNote.className='field-hint full';sharedNote.textContent='控制台端口、开机启动和窗口行为由主账号统一管理。';desktop.fields.prepend(sharedNote);
+  }
   disposeUpdates();disposeUpdates=mountUpdateStatus({host:desktop.card,action:consoleUpdate,subscribe:onShellEvent});
 
   // ---- 组件库：控制台外观自定义 ----
@@ -939,7 +1020,7 @@ function render() {
   // 参与"从基准重建表单"的键。必须包含背景图编辑器的四个参数，
   // 否则它们会被这里的白名单过滤掉，编辑器永远读到空值（选框量不到尺寸）。
   const ALL_KEYS = [...COLOR_FIELDS.map(([k]) => k), 'gradient', 'bgImage', 'bgOpacity', 'bgBlur', 'bgFit',
-    'bgRotate', 'bgZoom', 'bgOffsetX', 'bgOffsetY', ...LAYOUT_FIELDS];
+    'bgRotate', 'bgZoom', 'bgOffsetX', 'bgOffsetY', ...LAYOUT_FIELDS,...PERSONALIZATION_FIELDS.map(field=>field.key)];
 
   /** 当前选中的方案槽：'light' | 'dark' | 'custom:<id>' */
   const currentMode = () => {
@@ -964,8 +1045,10 @@ function render() {
 
   /** 切换方案 / 结构变化后重建整个组件库分区（路径前缀会变，必须重建控件） */
   function renderKit() {
+    appearanceChoices.splice(0).forEach(dispose=>dispose());
     backgroundEditor?.dispose();
     backgroundEditor = null;
+    const openAppearanceGroups=new Set([...kit.fields.querySelectorAll('details[open]')].map(el=>el.dataset.appearanceGroup));
     kit.fields.replaceChildren();
     const mode = currentMode();
     // A redraw after rename/palette/config refresh keeps the same logical upload.
@@ -987,20 +1070,21 @@ function render() {
     text(headTitle, `正在编辑：${slotLabel}`);
     const headRow = document.createElement('div'); headRow.className = 'actions';
     const nameInput = localInput(headRow, '方案名称', 'uikit-scheme-name'); nameInput.value = `我的方案 ${Object.keys(custom).length + 1}`;
-    headRow.append(button('另存为自定义方案', () => {
+    const createTheme=button('主题', () => {
       const name = String(nameInput.value || '').trim() || `我的方案 ${Object.keys(custom).length + 1}`;
       const { store, id } = saveCustom(form.value('ui.uikit'), name, currentScheme());
       replaceSchemeStore(store);
       refreshModeSelect();
       pushTheme(); renderKit();
       report(`已另存为「${name}」，并切换到该方案`);
-    }, 'primary'));
+    }, 'primary');createTheme.prepend(createIcon('plus',{size:16}));headRow.append(createTheme);
+    const undo=button('',()=>{if(!previousAppearance)return;const previous=previousAppearance;queue('ui.uikit',previous,false,true);previousAppearance=null;refreshModeSelect();pushTheme();renderKit();});undo.append(createIcon('undo',{size:18}));undo.title='撤销本次外观调整';undo.setAttribute('aria-label','撤销本次外观调整');undo.disabled=!previousAppearance;headRow.append(undo);
     head.append(headTitle, headRow);
     const headHint = document.createElement('small'); headHint.className = 'field-hint';
     text(headHint, isBase
       ? '这是出厂基准。改动任意一项后点「另存为」，就会变成一个独立于亮/暗基准的自定义方案。'
       : '这个自定义方案独立于亮色/暗色基准，可放心修改。');
-    head.append(headHint);
+    headHint.hidden=true;head.append(headHint);headTitle.hidden=true;
     kit.fields.append(head);
     renderComponentPreview(kit.fields);
 
@@ -1043,16 +1127,17 @@ function render() {
     // ③ 成型风格预设（配色起点）
     const presetRow = document.createElement('div'); presetRow.className = 'actions';
     for (const [name, preset] of Object.entries(PRESETS)) {
-      presetRow.append(button(preset.label, () => {
+      const palette=button('', () => {
         for (const [k, v] of Object.entries(preset.tokens)) queue(P(k), v);
         pushTheme(); renderKit();
-        report(`已套用配色：${preset.label}（${preset.note}）。点「另存为」可固定成自定义方案。`);
-      }));
+      });palette.className='palette-choice';palette.dataset.palette=name;palette.title=preset.label;palette.setAttribute('aria-label',preset.label);
+      for(const key of ['bg','surface','accent','text']){const swatch=document.createElement('span');swatch.style.background=preset.tokens[key]||effective[key];swatch.setAttribute('aria-hidden','true');palette.append(swatch);}const selectedMark=document.createElement('span');selectedMark.className='palette-check';selectedMark.append(createIcon('check',{size:14}));palette.append(selectedMark);presetRow.append(palette);
     }
+    refreshPalette=()=>{const current=currentScheme();for(const palette of presetRow.querySelectorAll('.palette-choice')){const preset=PRESETS[palette.dataset.palette];palette.setAttribute('aria-pressed',String(Object.entries(preset.tokens).every(([key,value])=>current[key]===value)));}};refreshPalette();
     const presetWrap = document.createElement('div'); presetWrap.className = 'setting-field full';
-    const presetTitle = document.createElement('span'); presetTitle.className = 'field-title'; text(presetTitle, '配色起点');
+    const presetTitle = document.createElement('span'); presetTitle.className = 'field-title'; text(presetTitle, '配色');
     const presetHint = document.createElement('small'); presetHint.className = 'field-hint';
-    text(presetHint, '一键填入一套成型配色（只写颜色，圆角/密度/布局保持你自己的设置）。');
+    presetHint.hidden=true;
     presetWrap.append(presetTitle, presetRow, presetHint);
     kit.fields.append(presetWrap);
 
@@ -1187,6 +1272,7 @@ function render() {
       wrap.append(title, select);
       if (hint) { const hintEl = document.createElement('small'); hintEl.className = 'field-hint'; text(hintEl, hint); wrap.append(hintEl); }
       kit.fields.append(wrap);
+      if(['bgFit','density','sidebar','btnAlign'].includes(key))appearanceChoices.push(mountChoiceCards(select).dispose);
     };
     pick('bgFit', '背景图铺法', [['cover', '铺满'], ['contain', '完整显示'], ['repeat', '平铺']]);
     pick('density', '间距密度', [[0.85, '紧凑'], [1, '标准'], [1.25, '宽松']]);
@@ -1221,6 +1307,8 @@ function render() {
       impact: `将丢弃${slotLabel}的自定义外观和背景设置，恢复为${mode === 'light' ? '亮色' : '暗色'}出厂基准。`,
     }));
     kit.fields.append(actions);
+    const personalization=renderAppearanceControls({effective,path:P,change:(key,value)=>{queue(P(key),value);pushTheme();}});appearanceChoices.push(personalization.dispose);
+    presetRow.append(undo);organizeAppearance(kit.fields,{background:bgWrap,presets:presetWrap,themeHeader:head,personalization:personalization.groups,open:openAppearanceGroups});
   }
 
   // 「界面预设」切换 → 重建（编辑目标换了，控件路径随之改变）
@@ -1251,7 +1339,7 @@ async function load(force = false) {
   if (loading || reloadConfirmation || resetting || resetAccepted || disposed) return;
   if(!force&&protectedSettingsDialog()){settingsReadDeferred=true;return;}
   if(force)settingsReadDeferred=false;
-  if (!force && (form.dirty || settingsStructure?.activityDirty || invalid.size || saving || hasFocusedSettingInput())) return;
+  if (!force && (form.dirty || hasAutoSaves() || settingsStructure?.activityDirty || invalid.size || saving || hasFocusedSettingInput())) return;
   if (force && (form.dirty||settingsStructure?.activityDirty||invalid.size)) {
     const snapshot = form.snapshot();
     const activitySnapshot=settingsStructure?.activitySnapshot();
@@ -1279,6 +1367,7 @@ async function load(force = false) {
   try {
     const resetVersion = resetStatusVersion;
     const runtime = await request('GET', '/api/status');
+    settingsStructure?.updateRuntime(runtime);
     if (disposed || resetting || (resetAccepted && fieldsHost.childElementCount)) return;
     let reset = resetVersion === resetStatusVersion ? runtime.reset : knownResetStatus || runtime.reset;
     if (['preparing', 'accepted', 'failed'].includes(reset?.phase)) {
@@ -1295,6 +1384,7 @@ async function load(force = false) {
         } else form.mergeBase(config);
       } else refreshAfterSave = force && saveCommitRevision !== readSaveRevision;
       applyResetStatus(acceptedResetReceipt || reset);
+      void contentReady();
       return;
     }
     const visionVersion = ++visionReadVersion,templateTicket=personaTemplates.ticket();
@@ -1310,22 +1400,26 @@ async function load(force = false) {
       availability = av.tools || []; toolAvailabilityPending = false; updateToolAvailability();
     }
     // An SSE/network reply may arrive after the first keystroke; don't erase it.
-    if (form.dirty || settingsStructure?.activityDirty || saving || hasFocusedSettingInput()) { form.mergeBase(config);settingsStructure?.refresh(); updateSecretStates(); updateModelVision(); return; }
+    if (form.dirty || hasAutoSaves() || settingsStructure?.activityDirty || saving || hasFocusedSettingInput()) { form.mergeBase(config);settingsStructure?.refresh(); updateSecretStates(); updateModelVision(); return; }
     config.ui ??= {};
     config.ui.uikit = migrateUikit(config.ui.uikit);
+    const base=structuredClone(form.base);base.ui??={};base.ui.uikit=migrateUikit(base.ui.uikit);
+    const catalogueKey=JSON.stringify([p.providers||[],t.templates||[],tl.tools||[],av.tools||[],sp.providers||[],vision.results||{},vision.error||'']);
     const viewKey = JSON.stringify([config, p.providers || [], t.templates || [], tl.tools || [], av.tools || [], sp.providers || [], vision.results || {}, vision.error || '']);
-    if (!force && renderedView?.key === viewKey && renderedView.version === form.version && !invalid.size) {
-      form.mergeBase(config); updateSecretStates(); report('配置已读取（脱敏）'); return;
+    if (!force && !invalid.size && (renderedView?.key === viewKey && renderedView.version === form.version || renderedView?.catalogueKey===catalogueKey&&JSON.stringify(config)===JSON.stringify(base))) {
+      form.mergeBase(config);renderedView={key:viewKey,catalogueKey,version:form.version};updateSecretStates();report('');return;
     }
     form.discard(config); providers = p.providers || []; tools = tl.tools || []; availability = av.tools || []; searchProviders = sp.providers || [];
-    render(); renderedView = { key: viewKey, version: form.version }; report('配置已读取（脱敏）');
-  } catch (error) { if (!resetting && !resetAccepted) report(error.message, true); } finally {
+    render(); renderedView = { key: viewKey,catalogueKey,version: form.version }; report('');void contentReady();
+  } catch (error) { if (!resetting && !resetAccepted) {report(error.message, true);if(!disposed)void contentReady();} } finally {
     loading = false;
+    if(pendingConnectQQ!==null&&settingsStructure&&!resetting&&!resetAccepted&&!disposed){const target=pendingConnectQQ;pendingConnectQQ=null;openAccountConnection(target);}
     if (refreshAfterSave) void load(); // One fresh read; existing guards retain later input and reset state.
   }
 }
+$('#save').hidden=true;
 $('#save').addEventListener('click', () => guarded(saveAll));
-$('#reload').addEventListener('click', () => load(true));
+$('#reload').addEventListener('click', () => guarded(async()=>{await flushAutoSaves();await saveAll();await load(true);}));
 $('#open-data').addEventListener('click', () => guarded(() => request('POST', '/api/open-data-dir', {})));
 $('#preview').addEventListener('click', () => guarded(async () => { const patch = form.snapshot().patch; const result = await request('POST', '/api/prompt-preview', patch); text($('#prompt'), result.systemPrompt); }));
 function lockResetForm(locked) {
@@ -1418,19 +1512,31 @@ const resetAction = bindDestructiveAction($('#reset'), {
   impact: '将清空全部聊天、记忆、密钥与设置。服务器会先建立原数据备份并提交重置申请，完整清理在下次启动 QQ Agent 时执行；接受后当前表单会锁定，需彻底退出并重启应用。',
   canActivate: () => !resetting && !resetPreparing && !resetAccepted && !disposed,
 });
-onBeforeLeave(async () => { if(resetAccepted)return;try{await blocklistRaw.flushGuard();await saveAll();await blocklistRaw.flushGuard();}catch(error){report(error.message,true);throw error;} });
+onBeforeLeave(async () => { if(resetAccepted)return;try{await flushAutoSaves();await blocklistRaw.flushGuard();await saveAll();await blocklistRaw.flushGuard();}catch(error){report(error.message,true);throw error;} });
+const liveSettings=createLiveRefresh(async()=>{
+  if(protectedSettingsDialog()||form.dirty||hasAutoSaves()||saving||hasFocusedSettingInput()){settingsReadDeferred=true;return;}
+  settingsReadDeferred=false;await load();
+});
+const settingsBlur=()=>{if(settingsReadDeferred)liveSettings.request();};
+document.addEventListener('focusout',settingsBlur);
+document.addEventListener('close',settingsBlur,true);
+onLeave(()=>{liveSettings.dispose();document.removeEventListener('focusout',settingsBlur);document.removeEventListener('close',settingsBlur,true);});
 onShellEvent((name, payload) => {
+  if(name==='hello')liveSettings.request();
+  if(['plugin-loaded','plugin-unloaded','plugin-error'].includes(name)){void refreshToolAvailability();liveSettings.request();}
+  if (name === 'onebot-status') settingsStructure?.updateRuntime({onebot:payload});
+  else if (name === 'status' && payload?.onebot) settingsStructure?.updateRuntime(payload);
   if (name === 'settings-section' && ['models','access','onebot'].includes(payload?.section)) {
     activeSection = payload.section;sectionFilter = '';
     $('#settings-filter').value = '';
     if (navigationSections().has(activeSection)) { buildSectionNav();selectSection(activeSection); }
+    if(payload.section==='onebot'&&(payload.connectQQ===true||typeof payload.connectQQ==='string'&&/^\d{5,20}$/.test(payload.connectQQ)))openAccountConnection(payload.connectQQ);
   }
   if (name === 'status' && payload?.reset) { knownResetStatus = payload.reset; ++resetStatusVersion; applyResetStatus(payload.reset); }
   if(name==='status'&&payload?.personaTemplatesUpdated){void personaTemplates.refresh();void settingsStructure?.refreshPersonas();void syncPersonaByChat();}
   if(name==='status'&&payload?.personaByChatUpdated){void personaByChat.refresh();void settingsStructure?.refreshPersonas();void syncPersonaByChat();}
   if (name === 'status' && payload?.configUpdated && !payload.personaTemplatesUpdated && !payload.personaByChatUpdated) {
-    if(protectedSettingsDialog())settingsReadDeferred=true;
-    else if(!form.dirty&&!saving&&!hasFocusedSettingInput())void load();
+    liveSettings.request();
   }
   if (name === 'vision-scan') { const target = $('#api-test-result'); if (target) output(target, payload); if (['done', 'error'].includes(payload?.phase)) void refreshVisionResults(); }
 });

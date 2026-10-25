@@ -6,6 +6,9 @@ export function createServiceHost({ capability, config, bus, log = console, auth
   const instances = new Map();
   const errors = new Map();
   const pending = new Set();
+  // Host-owned connection switches can suspend one service without stopping
+  // the console, scheduler or the other selected providers.
+  const disabled = new Set();
   const stopFailures = [];
   let running = false, epoch = 0, queue = Promise.resolve();
   const stops = new Set();
@@ -22,6 +25,7 @@ export function createServiceHost({ capability, config, bus, log = console, auth
     }
     if (!entry.instance || entry.stopPromise) return entry.stopPromise;
     entry.stopPromise = Promise.resolve().then(() => runInHostContext(() => entry.instance.stop?.())).catch((error) => {
+      entry.stopError = error;
       stopFailures.push(error);
       errors.set(entry.name, String(error?.message ?? error));
       log.warn?.(`[services] ${entry.name}/${entry.ownerId} 停止失败：${error?.message ?? error}`);
@@ -50,7 +54,7 @@ export function createServiceHost({ capability, config, bus, log = console, auth
   const managed = (name, item) => capability.options(name, item?.ownerId)?.lifecycle === true;
   function current(entry) {
     const candidate = selected(entry.name);
-    return running && !entry.disposed && !entry.controller.signal.aborted && entry.epoch === epoch
+    return running && !disabled.has(entry.name) && !entry.disposed && !entry.controller.signal.aborted && entry.epoch === epoch
       && candidate?.ownerId === entry.ownerId && candidate.provider === entry.definition
       && (capability.version?.(entry.name, entry.ownerId) ?? null) === entry.version;
   }
@@ -70,7 +74,7 @@ export function createServiceHost({ capability, config, bus, log = console, auth
     for (const name of capability.names()) {
       if (!running || generation !== epoch) return;
       const candidate = selected(name);
-      if (!candidate || !managed(name, candidate) || instances.has(name)) continue;
+      if (disabled.has(name) || !candidate || !managed(name, candidate) || instances.has(name)) continue;
       const entry = { name, ownerId: candidate.ownerId, definition: candidate.provider, version: capability.version?.(name, candidate.ownerId) ?? null, controller: new AbortController(), epoch: generation, instance: null, disposed: false, started: false };
       pending.add(entry);
       try {
@@ -165,6 +169,17 @@ export function createServiceHost({ capability, config, bus, log = console, auth
   }
   return {
     async start() { if (!running) { subscribe(); running = true; epoch++; } await refresh(); },
+    async setEnabled(name, enabled) {
+      if (typeof name !== 'string' || !name || typeof enabled !== 'boolean') throw new TypeError('服务开关参数无效');
+      if (enabled) { disabled.delete(name); await refresh(); return; }
+      // Fence synchronous get/token/event calls before awaiting any stop. This
+      // also cancels a provider whose factory or start is still pending.
+      disabled.add(name);
+      const entries = [...new Set([...instances.values(), ...pending])].filter(entry => entry.name === name);
+      await Promise.all(entries.map(trackDispose));
+      const failures = entries.map(entry => entry.stopError).filter(Boolean);
+      if (failures.length) throw new AggregateError(failures, '所选服务未能完全停止');
+    },
     refresh,
     invalidate,
     async stop() {
@@ -176,6 +191,7 @@ export function createServiceHost({ capability, config, bus, log = console, auth
     },
     idle: () => queue,
     get(name) {
+      if (disabled.has(name)) return undefined;
       const item = selected(name);
       if (!item) return undefined;
       if (!managed(name, item)) return item.provider;
@@ -185,6 +201,7 @@ export function createServiceHost({ capability, config, bus, log = console, auth
     // Host-only identity for completion guards. This is never part of a plugin
     // facet and changes even when an owner re-registers the same definition.
     token(name) {
+      if (disabled.has(name)) return null;
       const item = selected(name);
       if (!item) return null;
       if (!managed(name, item)) return capability.version?.(name, item.ownerId) ?? item.provider;

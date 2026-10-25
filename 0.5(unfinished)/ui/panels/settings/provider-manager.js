@@ -2,6 +2,7 @@ import {button,destructiveButton,formDialog,text} from '../ui.js';
 import {modelId,modelLabel,providerEndpointIdentity} from './model-catalog-data.js';
 import {addProviderModel} from './model-catalog.js';
 import {openModelImport} from './model-import.js';
+import {createAutoSave,saveFeedback} from './auto-save.js';
 
 // Default UI leaf. Mutations use the existing per-field channel transaction;
 // discovery never imports models before an explicit selection is submitted.
@@ -26,7 +27,8 @@ export function createProviderManager({host,request,beforeWrite,changed,activePr
     const rows=new Map(),isLive=()=>live()&&!closed&&item.isConnected,owner=()=>item.closest('dialog[data-settings-editor="model-manager"][open]');
     const expected=()=>({baseUrl:baseline.baseURL||baseline.baseUrl,displayName:baseline.displayName||baseline.name||baseline.id,credentialRevision:baseline.credentialRevision});
     const dirty=()=>name.value.trim()!==(baseline.displayName||baseline.name||baseline.id)||providerEndpointIdentity(base.value)!==providerEndpointIdentity(baseline.baseURL||baseline.baseUrl)||!!keyDraft;
-    function fail(error){if(!isLive())return;text(feedback,`${error.message||error}；输入已保留`);feedback.className='field-error provider-save-status';recovery.hidden=false;notify();}
+    const autoSave=createAutoSave({root:item,save:flush,dirty,onError:fail});
+    function fail(error){if(!isLive())return;text(feedback,error.message||error);feedback.className='field-error provider-save-status';recovery.hidden=false;saveFeedback('error',`未保存 · ${error.message||error}`,()=>flush().catch(fail));notify();}
     function sync(){text(title,saved.displayName||saved.id);text(pick,`${saved.displayName||saved.id}${activeProvider()===saved.id?' · 当前':''}`);text(modelsTitle,`模型（${(saved.models||[]).length} 个）`);key.dataset.managerKey=saved.hasKey?'set':'empty';key.placeholder=saved.hasKey?'已保存密钥；输入新密钥可替换':'输入 API Key';pull.hidden=!providerEndpointIdentity(base.value)||!(keyDraft||saved.hasKey);}
     function closeDiscovery(){++fetchVersion;fetching=null;pull.disabled=false;discovery?.close();discovery=null;text(discoveryStatus,'');}
     function purge(){++readVersion;clearTimeout(keyTimer);shown=false;key.type='password';key.value=keyDraft;text(show,'显示');}
@@ -65,7 +67,7 @@ export function createProviderManager({host,request,beforeWrite,changed,activePr
       commit=(async()=>{await beforeWrite();if(!isLive())throw Error('渠道管理已关闭，操作已取消');const receipt=await request('POST','/api/providers/update',{providerId:saved.id,expected:old,changes});if(!isLive())return;
         baseline=saved=receipt.provider;if(name.value===sentName)name.value=saved.displayName||saved.id;if(base.value===sentBase)base.value=saved.baseURL||saved.baseUrl;if(keyVersion===sentKeyVersion){keyDraft='';purge();}sync();drawModels();text(feedback,editVersion===version?'已保存':'已保存提交时的改动，后续输入仍保留');await changed();
       })();notify();
-      try{await commit;}catch(error){fail(error);throw error;}finally{commit=null;notify();}
+      try{await commit;if(!dirty())saveFeedback('saved');}catch(error){fail(error);throw error;}finally{commit=null;notify();}
       if(dirty())await flush();
     }
     const stamp=()=>`${providerEndpointIdentity(saved.baseURL||saved.baseUrl)}|${saved.credentialRevision||''}`;
@@ -85,7 +87,7 @@ export function createProviderManager({host,request,beforeWrite,changed,activePr
     }
     function edited(kind){++editVersion;if(kind==='apiKey'){++keyVersion;keyDraft=key.value.trim();shown=false;key.type='password';text(show,'显示');}if(kind!=='displayName'){++sourceVersion;attempted='';++readVersion;closeDiscovery();for(const row of rows.values())text(row.result,'');}sync();notify();}
     for(const[kind,input]of [['displayName',name],['baseUrl',base],['apiKey',key]]){
-      input.addEventListener('input',()=>edited(kind));input.addEventListener('blur',event=>{
+      input.addEventListener('input',()=>{edited(kind);autoSave.schedule();});input.addEventListener('blur',event=>{
         clearTimeout(timer);const skip=event.relatedTarget?.closest('[data-skip-provider-pull]');timer=setTimeout(()=>{timer=null;if([name,base,key].includes(doc.activeElement))return;void(async()=>{await flush();if(kind!=='displayName'&&!skip&&base.value.trim())await discover(true);})().catch(fail);},100);
       });
     }
@@ -95,9 +97,9 @@ export function createProviderManager({host,request,beforeWrite,changed,activePr
     const pull=button('拉取模型',()=>discover()),addModel=button('添加模型',async()=>{await flush();if(isLive())addProviderModel({provider:saved,request,beforeWrite:flush,changed});});modelHead.append(modelsTitle,addModel,pull);
     recovery.append(button('重试保存',()=>flush()),button('重新读取此渠道',async()=>{const data=await request('GET','/api/providers'),latest=data.providers.find(p=>p.id===saved.id);if(!isLive()||!latest)return;keyDraft='';pause();baseline=saved=latest;name.value=latest.displayName||latest.id;base.value=latest.baseURL||latest.baseUrl;recovery.hidden=true;text(feedback,'已重新读取');sync();drawModels();notify();}));
     for(const action of [pull,clearKey,remove,addModel])action.dataset.skipProviderPull='';
-    function rename(id){const value=saved.models.find(m=>modelId(m)===id),label=modelLabel(saved,value),signature=stamp(),dialog=formDialog('编辑模型',[{key:'name',label:'显示名称',value:label,required:true,maxLength:200},{key:'id',label:'模型 ID',value:id,required:true,maxLength:500}],async fields=>{await flush();if(!isLive()||!owner()||current!==saved.id||stamp()!==signature||!dialog.isConnected||!dialog.open)throw Error('渠道已变化，请重新打开模型编辑');await request('POST','/api/providers/models/update',{providerId:saved.id,expectedBaseUrl:saved.baseURL||saved.baseUrl,modelId:id,expectedName:label,id:fields.id,name:fields.name});await changed();});const hint=doc.createElement('p');hint.className='muted';hint.textContent='模型 ID 要与服务商提供的一致。修改后，使用此模型的配置会同步更新。';dialog.querySelector('h3').after(hint);}
+    function rename(id){const value=saved.models.find(m=>modelId(m)===id),label=modelLabel(saved,value),signature=stamp();let modelIdCurrent=id,modelNameCurrent=label;const dialog=formDialog('编辑模型',[{key:'name',label:'显示名称',value:label,required:true,maxLength:200},{key:'id',label:'模型 ID',value:id,required:true,maxLength:500}],async fields=>{await flush();if(!isLive()||!owner()||current!==saved.id||stamp()!==signature||!dialog.isConnected||!dialog.open)throw Error('渠道已变化，请重新打开模型编辑');await request('POST','/api/providers/models/update',{providerId:saved.id,expectedBaseUrl:saved.baseURL||saved.baseUrl,modelId:modelIdCurrent,expectedName:modelNameCurrent,id:fields.id,name:fields.name});modelIdCurrent=fields.id;modelNameCurrent=fields.name;await changed();},{autoSave:(root,save)=>createAutoSave({root,save})});const hint=doc.createElement('p');hint.className='muted';hint.textContent='模型 ID 需与服务商一致';dialog.querySelector('h3').after(hint);}
     filter.addEventListener('input',drawModels);item.append(head,baseWrap,credential,feedback,recovery,modelHead,discoveryStatus,filter,catalogue);name.value=provider.displayName||provider.name||provider.id;base.value=provider.baseURL||provider.baseUrl||'';sync();drawModels();
-    return{item,pick,accept,flush,pause,purge,fail,get dirty(){return dirty()||!!commit;},dispose(){closed=true;pause();keyDraft='';key.value='';rows.clear();}};
+    return{item,pick,accept,flush,pause,purge,fail,get dirty(){return dirty()||!!commit;},dispose(){closed=true;autoSave.dispose();pause();keyDraft='';key.value='';rows.clear();}};
   }
   function render(values){
     if(disposed)return;const wanted=new Set(values.map(p=>p.id));for(const[id,entry]of entries)if(!wanted.has(id)){entry.dispose();entry.item.remove();entry.pick.remove();entries.delete(id);}

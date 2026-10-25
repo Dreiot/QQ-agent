@@ -1,0 +1,70 @@
+#account-controls{flex:0 1 auto;min-width:0;max-width:100%;margin-right:14px;}
+.account-switcher{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;min-width:0;max-width:100%;}
+.account-switcher[data-empty=true]{grid-template-columns:auto;}.account-switcher>[hidden]{display:none!important;}
+.account-view-caption{color:var(--muted);font-size:11px;white-space:nowrap;}
+.account-choice-list{display:flex;flex-wrap:wrap;align-items:stretch;gap:6px;min-width:0;}
+.account-choice{display:flex;align-items:center;gap:8px;min-width:96px;max-width:206px;min-height:44px;padding:6px 10px;text-align:left;color:var(--text);border:1px solid var(--line);border-radius:var(--radius-card,var(--r-md));background:var(--surface-2);transform:none;box-shadow:none;transition:border-color var(--motion-fast),background-color var(--motion-fast);}
+.account-choice:hover:not(:disabled){background:var(--hover-surface,var(--surface-2));transform:none;}
+.account-choice[aria-checked=true]{border-color:var(--accent);background:var(--selected-surface,var(--surface-2));box-shadow:inset 3px 0 0 var(--accent);}
+.account-choice[aria-checked=true]:hover:not(:disabled){background:var(--selected-surface,var(--surface-2));}
+.account-choice-identity{display:grid;gap:3px;min-width:0;flex:1;}
+.account-choice-identity>strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:var(--control-font-weight,600);line-height:1.35;}
+.account-choice-identity>small{font-family:var(--font-mono);color:var(--muted);font-size:10px;line-height:1.2;}
+.account-choice-identity>[hidden]{display:none!important;}
+.account-view-mark{display:grid;place-items:center;flex:none;width:16px;color:var(--accent);visibility:hidden;}
+.account-choice[aria-checked=true] .account-view-mark{visibility:visible;}
+.account-switcher-tools{display:flex;align-items:center;gap:2px;padding:3px;border:1px solid var(--line);border-radius:var(--radius-card,var(--r-md));}
+.account-switcher-tools>button{display:grid;place-items:center;flex:none;width:32px;min-width:32px;min-height:34px;padding:0;border:0;background:transparent;color:var(--muted);}
+.account-switcher-tools>button:hover:not(:disabled){color:var(--text);background:var(--hover-surface,var(--surface-2));}
+.account-current-indicator{display:block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--muted);}
+.account-current-indicator[data-state=connected]{background:var(--good);}
+.account-current-indicator[data-state=waiting]{box-sizing:border-box;background:transparent;border:1px solid var(--warn);}
+.account-current-indicator[data-state=error]{background:var(--bad);}
+.account-switcher[hidden],.account-manager-dialog [hidden]{display:none!important;}
+.account-manager-dialog{width:min(600px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:0;overflow:auto;}
+.account-manager-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 22px;border-bottom:1px solid var(--line);}
+.account-manager-head>h2{margin:0;font-size:17px;}
+.account-manager-head-actions{display:flex;align-items:center;gap:4px;}
+.account-manager-head-actions>button{display:grid;place-items:center;width:36px;min-height:36px;padding:0;background:transparent;}
+.account-manager-body{display:grid;gap:14px;padding:22px;}
+.account-manager-section{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+.account-manager-section>h3{margin:0;font-size:13px;font-weight:600;}
+.account-manager-count{font-size:11px;font-variant-numeric:tabular-nums;}
+.account-manager-note{margin:0;font-size:11px;line-height:1.6;}
+.account-manager-list{display:grid;gap:10px;}
+.account-manager-row{display:grid;grid-template-columns:minmax(0,1fr) 88px;align-items:center;gap:12px;min-width:0;}
+.account-connection-card{display:flex;align-items:center;gap:12px;width:100%;min-width:0;min-height:86px;padding:14px;text-align:left;border:1px solid var(--line);border-radius:var(--radius-card,var(--r-md));background:var(--surface-2);color:var(--text);transform:none;box-shadow:none;transition:border-color var(--motion-fast),background-color var(--motion-fast);}
+.account-connection-card:hover:not(:disabled){background:var(--hover-surface,var(--surface-2));transform:none;}
+.account-connection-card[aria-checked=true]{border-color:var(--accent);background:var(--selected-surface,var(--surface-2));box-shadow:inset 3px 0 0 var(--accent);}
+.account-connection-card[aria-checked=true]:hover:not(:disabled){background:var(--selected-surface,var(--surface-2));}
+.account-connection-mark{display:grid;place-items:center;flex:none;width:22px;height:22px;border:1px solid var(--line-strong,var(--line));border-radius:50%;background:transparent;}
+.account-connection-mark>.qq-icon{visibility:hidden;color:var(--accent);}
+.account-connection-card[aria-checked=true] .account-connection-mark{border-color:var(--accent);}
+.account-connection-card[aria-checked=true] .account-connection-mark>.qq-icon{visibility:visible;}
+.account-manager-identity{display:grid;gap:4px;min-width:0;flex:1;}
+.account-manager-identity>strong{font-size:13px;overflow-wrap:anywhere;}
+.account-manager-identity>small{font-size:11px;overflow-wrap:anywhere;}
+.account-manager-state{color:var(--muted);}
+.account-connection-card[aria-checked=true] .account-manager-state{color:var(--text);}
+.account-manager-actions{display:flex;align-items:flex-end;flex-direction:column;gap:8px;min-width:52px;justify-content:flex-end;}
+.account-manager-actions>button{font-size:12px;min-height:32px;padding:4px 9px;}
+.account-connect-view{white-space:nowrap;}
+.account-manager-current{color:var(--accent);font-size:11px;white-space:nowrap;}
+.account-manager-footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding-top:4px;}
+.account-manager-footer>button{display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;min-height:36px;}
+.account-manager-body>.field-error{margin:0;overflow-wrap:anywhere;}
+.account-choice:focus-visible,.account-connection-card:focus-visible{outline:2px solid var(--accent);outline-offset:-3px;}
+.account-manager-row[data-attention=true] .account-connection-card{border-color:var(--accent);}
+.account-connection-card[aria-busy=true]{opacity:1;cursor:wait;}
+.account-connection-card[aria-busy=true] .account-connection-mark{border-color:var(--accent);border-right-color:transparent;animation:account-connecting 1s linear infinite;}
+.account-connection-card[aria-busy=true] .account-connection-mark>.qq-icon{visibility:hidden;}
+@keyframes account-connecting{to{transform:rotate(360deg);}}
+@media(prefers-reduced-motion:reduce){.account-connection-card[aria-busy=true] .account-connection-mark{animation:none;border-style:dashed;}}
+@media(max-width:1100px){.topbar{flex-wrap:wrap;gap:8px;}#account-controls{flex-basis:100%;margin-right:0;}.account-choice{flex:1 1 110px;max-width:206px;}.runtime-controls{width:100%;}}
+@media(max-width:760px){.account-manager-body{padding:16px;}.account-manager-head{padding:14px 16px;}.account-manager-row{gap:9px;}.account-connection-card{gap:9px;padding:12px;}}
+@media(max-width:460px){.account-switcher{grid-template-columns:minmax(0,1fr) auto;gap:6px;}.account-view-caption{display:none;}.account-choice{min-width:0;flex-basis:96px;padding:6px 8px;gap:6px;}.account-view-mark{width:14px;}.account-manager-row{grid-template-columns:minmax(0,1fr);gap:4px;}.account-manager-actions{min-height:28px;}.account-manager-footer>button{width:100%;}}
+.account-manager-dialog .account-connection-card[data-state=waiting]{background:var(--surface-2);border-color:var(--line-strong,var(--line));box-shadow:none;}
+.account-manager-dialog .account-connection-card[data-state=waiting] .account-connection-mark{border-color:var(--warn);}.account-manager-dialog .account-connection-card[data-state=waiting] .account-connection-mark>.qq-icon{color:var(--warn);}
+.account-manager-dialog .account-connection-card[data-state=connected]{background:color-mix(in srgb,var(--good) 10%,var(--surface-2));border-color:color-mix(in srgb,var(--good) 65%,var(--line));box-shadow:none;}
+.account-manager-dialog .account-connection-card[data-state=connected] .account-connection-mark{border-color:var(--good);}.account-manager-dialog .account-connection-card[data-state=connected] .account-connection-mark>.qq-icon{color:var(--good);}
+.account-manager-dialog .account-connection-card[data-state=error]{background:color-mix(in srgb,var(--bad) 7%,var(--surface-2));border-color:var(--bad);box-shadow:none;}

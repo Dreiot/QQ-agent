@@ -21,6 +21,10 @@ main > .toolbar { border-bottom: 1px solid var(--line); padding: 6px 0 8px; marg
 #list .muted { margin-top: 6px; font-size: 11px; line-height: 1.7; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .session-row-title { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; min-width: 0; }
 .session-title-text { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+body[data-panel=sessions] #list .session-title-text { display:flex;align-items:center;gap:6px; }
+body[data-panel=sessions] #list .session-title-text .list-entry-open { flex:1 1 auto;min-width:0;min-height:24px;padding:0;white-space:nowrap; }
+body[data-panel=sessions] #list .session-title-text .list-entry-open > strong { flex:1 1 auto;min-width:0;display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;overflow-wrap:normal; }
+body[data-panel=sessions] #list .session-chat-name { flex:0 1 auto;max-width:40%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis; }
 .session-row-metrics { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
 .session-state-label { flex: 0 0 auto; font-size: 10px; font-weight: 600; color: var(--session-status-color,var(--muted)); }
 .session-row-title strong { min-width: 0; }

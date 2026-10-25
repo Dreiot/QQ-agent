@@ -33,6 +33,7 @@ test('production entrypoint consumes appended UI/controller/core layers and a ne
     if (errors.length) throw new AggregateError(errors, 'fixture cleanup failed');
   });
   for (const name of ['src', 'bundled', 'ui']) fs.cpSync(path.join(workspace, name), path.join(root, name), { recursive: true });
+  fs.mkdirSync(path.join(root,'scripts'),{recursive:true});fs.cpSync(path.join(workspace,'scripts/lib'),path.join(root,'scripts/lib'),{recursive:true});
   fs.writeFileSync(path.join(root, 'package.json'), '{"type":"module"}');
   fs.symlinkSync(path.join(workspace, 'node_modules'), path.join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   const { createApplication } = await import(pathToFileURL(path.join(root, 'src/kernel/composition.js')));

@@ -75,10 +75,10 @@ try{
       forward:n.querySelector('[data-message="453"] .forward-content')===window.__forward254,
       rows:[...window.__list254].every(([id,row])=>document.querySelector(`[data-chat="${id}"]`)===row),scroll:n.scrollTop,initialScroll:window.__scroll254,
       wholeAnimation:document.querySelector('#detail').getAnimations().some(a=>a.playState==='running'),actionAnimation:[...document.querySelectorAll('.archive-actions button')].some(n=>n.getAnimations().some(a=>a.animationName==='archive-action-in'&&a.playState==='running')),writes:window.__contentWrites254}));
-    const before=reads;await wait(()=>Promise.resolve(reads>=before+2));await pause(80);
+    const before=reads;f.kernel.httpServer.broadcast('hello',{});await wait(()=>Promise.resolve(reads>=before+1));f.kernel.httpServer.broadcast('hello',{});await wait(()=>Promise.resolve(reads>=before+2));await pause(80);
     const quiet=await stable();for(const name of ['host','tools','draft','row','body','check','checked','stamp','open','image','forward','rows'])assert.equal(quiet[name],true,name);
     assert.equal(quiet.wholeAnimation,false);assert.equal(quiet.actionAnimation,false,'quiet reconciliation does not replay the action entrance');assert.equal(quiet.writes,0,'unchanged reconciliation must not rewrite even the time/sender text nodes');assert.ok(Math.abs(quiet.scroll-quiet.initialScroll)<=1);
-    events.push('repeated fallback reconciliation writes no message content and preserves loaded image/fold/draft/selection/scroll');
+    events.push('repeated reconnect reconciliation writes no message content and preserves loaded image/fold/draft/selection/scroll');
     const started=Date.now();f.kernel.store.appendIncoming(key,{mid:254621,senderId:'25410',text:'SSE 即时新增 621',atMe:false});f.kernel.bus.emit('chat.update',key);
     await host.locator('[data-message="621"]').waitFor();const elapsed=Date.now()-started;assert.ok(elapsed<950,`SSE should not await the 1000ms fallback (${elapsed}ms)`);
     const live=await stable();for(const name of ['host','tools','draft','row','body','check','checked','stamp','open','image','forward','rows'])assert.equal(live[name],true,name);assert.equal(live.wholeAnimation,false);assert.ok(Math.abs(live.scroll-live.initialScroll)<=1);
@@ -99,7 +99,7 @@ try{
     assert.equal(await f.frame.locator('#detail').evaluate(n=>n.getAnimations().some(a=>a.playState==='running')),false);
     // Start just after one recovery cycle so its two paging requests are not
     // mistaken for a redundant request caused by the next click.
-    const recoveryReads=reads;await wait(()=>Promise.resolve(reads>=recoveryReads+2));await pause(80);
+    const recoveryReads=reads;f.kernel.httpServer.broadcast('hello',{});await wait(()=>Promise.resolve(reads>=recoveryReads+2));await pause(80);
     const reselectReads=reads;await chat.click();await pause(100);assert.equal(reads,reselectReads,'reselect has no redundant detail request');
     await other.click();await host.locator('.body').filter({hasText:'另一个聊天 75'}).waitFor();assert.equal(await host.locator('[data-message="30"] input').isChecked(),true);assert.equal(await f.frame.locator('#test-send-text').inputValue(),'另一个聊天的独立草稿');assert.ok(Math.abs(await host.evaluate(n=>n.scrollTop-window.__otherScroll254))<=1);
     events.push('switching preserves each chat\'s older window, independent selection, folds, draft and scroll, with a stable toolbar');
@@ -128,7 +128,7 @@ try{
     if(evidence)await f.page.screenshot({path:path.join(evidence,'archive-incremental.png'),fullPage:true});
     const headings=[];for(const id of ['sessions','chats','memory','usage','skills','plugins','logs','settings','community']){
       await f.page.locator(`#nav button[data-panel="${id}"]`).click();await f.frame.locator(`body[data-panel="${id}"] main > .head`).waitFor();
-      const style=await f.frame.locator('main > .head').evaluate(n=>{const css=getComputedStyle(n),main=getComputedStyle(n.parentElement);return{minHeight:css.minHeight,paddingBottom:css.paddingBottom,marginBottom:css.marginBottom,paddingTop:main.paddingTop};});assert.deepEqual(style,{minHeight:'35px',paddingBottom:'4px',marginBottom:'6px',paddingTop:'8px'},id);headings.push(id);
+      const style=await f.frame.locator('main > .head').evaluate(n=>{const css=getComputedStyle(n),main=getComputedStyle(n.parentElement);return{minHeight:css.minHeight,paddingBottom:css.paddingBottom,marginBottom:css.marginBottom,paddingTop:main.paddingTop};});assert.deepEqual(style,{minHeight:'44px',paddingBottom:'10px',marginBottom:'14px',paddingTop:'10.4px'},id);headings.push(id);
     }
     verification.compactHeaders=headings;events.push('all nine default panels consume the same compact heading spacing');
     console.log('✓ 254 in-place message/meta/media updates, quiet recovery, real SSE, stable pane, per-chat reading/selection/quote/draft and rapid-switch guards');

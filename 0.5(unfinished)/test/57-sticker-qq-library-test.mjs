@@ -275,11 +275,11 @@ console.log('\n=== F. 面板白名单与按钮 ===');
   const manager = read('ui/panels/extension-manager.js');
   assert.ok(manager.includes("destructiveButton('卸载'"), '扩展管理有渐进确认的卸载动作');
   assert.ok(manager.includes('installZip'), '有 ZIP 安装动作');
-  assert.ok(manager.includes("button('热更新'"), '有热更新动作');
+  assert.ok(manager.includes("button('重新加载'"), '有热更新动作');
   assert.ok(manager.includes("button('宿主授权'"), '有宿主授权动作');
-  assert.ok(manager.includes('clicks: 4'), '卸载使用四次点击确认');
+  assert.match(manager,/clicks:\s*4/,'卸载使用四次点击确认');
   assert.ok(read('ui/panels/destructive-action.js').includes("classList.add('danger'"), '统一删除组件保留危险样式');
-  assert.ok(manager.includes("extension.root !== 'bundled'"), '只有用户域扩展才给卸载/授权按钮');
+  assert.match(manager,/extension\.root\s*!==\s*'bundled'/,'只有用户域扩展才给卸载/授权按钮');
   for (const id of ['skills', 'plugins']) {
     assert.ok(read(`ui/panels/${id}/index.html`).includes('id="install"'), `${id}/index.html 有安装按钮`);
     assert.ok(read(`ui/panels/${id}/panel.js`).includes("from'../extension-manager.js'"), `${id} 面板接入共享管理模块`);

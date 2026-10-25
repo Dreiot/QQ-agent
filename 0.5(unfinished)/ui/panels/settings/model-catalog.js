@@ -12,7 +12,7 @@ export function addProviderModel({provider,request,beforeWrite,changed}){
     await beforeWrite();if(!dialog.isConnected||!dialog.open)throw new Error('添加模型已取消');
     await request('POST','/api/providers/models',{providerId:provider.id,expectedBaseUrl:provider.baseURL||provider.baseUrl,onlyMissing:true,models:[{id,name:fields.name.trim()||id}]});
     await changed();
-  });return dialog;
+  },{submitLabel:'添加模型'});return dialog;
 }
 
 // Ordinary settings UI: no token/storage access or new host privileges. The

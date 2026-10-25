@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>设置 · QQ Agent</title>
   <link rel="stylesheet" href="../common.css"><link rel="stylesheet" href="style.css">
-</head>
+<link rel="stylesheet" href="../visual-refinements.css"></head>
 <body data-panel="settings">
 <main>
   <header class="head">
@@ -13,18 +13,18 @@
       <h2>设置</h2>
       <div id="status" class="muted" role="status">加载中</div>
     </div>
-    <div class="actions"><button id="reload" type="button">重新读取</button><button id="save" class="primary" type="button">保存改动</button><button id="open-data" type="button">打开数据目录</button><button id="reset" class="danger" type="button">重置全部数据</button></div>
+    <div class="actions"><button id="reload" type="button" title="刷新设置" aria-label="刷新设置"></button><button id="save" hidden type="button">保存改动</button><button id="open-data" type="button">打开数据目录</button><button id="reset" class="danger" type="button">重置全部数据</button></div>
   </header>
   <div class="settings-layout">
     <aside class="settings-aside">
       <div class="settings-filter">
         <label class="settings-filter-field">
-          <span class="eyebrow">FILTER</span>
-          <input id="settings-filter" type="search" placeholder="筛选分区…" autocomplete="off" aria-label="筛选设置分区">
+          <input id="settings-filter" type="search" placeholder="搜索设置" autocomplete="off" aria-label="搜索设置">
         </label>
       </div>
       <nav id="settings-sidebar" class="settings-sidebar" aria-label="设置分区导航"></nav>
       <div id="settings-sidebar-empty" class="settings-filter-empty" hidden>没有匹配的分区</div>
+      <div id="settings-search-results" class="settings-search-results" hidden></div>
     </aside>
     <div class="settings-content">
       <section id="fields" class="settings-sections"></section>

@@ -251,3 +251,11 @@ UI 根目录与显式单文件覆盖共同按层次裁决：新层完整页面/�
 `console.sessionNames({resolveSource,serviceLeaseOf,capability,bus,lifecycle,...})`返回`getNames(keys,{signal}):Promise<Map>`和`dispose()`，实际会话list/detail DTO消费它并增加`chatName`字符串。默认只读当前所选transport的目录/名称动作，来源包含service token、账号和可选opaque配置代；不落会话档案、不扩会话页读取聊天正文的权限。目录单飞、缓存、离线/失败退避与旧单名动作兼容见[群名展示](session-name-presentation-migration.md)。
 
 `panels/sessions/chat-title.js`与`scroll-policy.js`分别导出名称格式化与同步capture/restore策略，实际默认会话页调用所选资产。追加文件可独立替换任一叶子，无需复制整页；删除或禁层后新实例恢复默认。滚动策略保留贴底条件与阅读锚点，不改变follow选择或JSON模式，见[滚动合同](session-detail-scroll-migration.md)。这些是新默认项，不是固定到外壳的新特权。
+
+## 18. 用户自备协议端
+
+`runtime.localProtocols({appRoot,dataDir,config,bus,env,...})` 同步返回本地协议端管理器，拥有 `start()`、`close()`、`scan()`、`snapshot()`、`launch(id,account?)`、`stop()`、`saveSettings(body)` 与只读 `output()`。默认实现见 `src/protocols/manager.js`，上游包识别和配置适配位于独立的 `src/protocols/adapters.js`。kernel 将它纳入所选组合的启动和一次性清理，不修改已经创建的传输模块。
+
+`console.localProtocols(http,{localProtocols,...})` 注册对应设置 API；默认由所选 `console.routes` 调用，可独立替换。设置面板的声明只授予配置角色访问这些接口。普通扩展不会获得本地任意命令、路径或 PID 执行接口；启动目标只能是扫描到并重新核验的包 ID，停止目标只能是本应用持有的进程树。
+
+协议端只来自用户自行放入的目录或 ZIP，QQ-Agent 不附带或下载第三方程序。手动 OneBot 地址/令牌合同保持独立，本地管理器在明确启动操作后通过配置仓更新连接。目录事件、进程状态和输出版本以 `local-protocols` 通知界面，公开通知不含启动明文、登录凭据或连接令牌。详见[接入与验收边界](local-protocols-validation-2026-10-24.md)。

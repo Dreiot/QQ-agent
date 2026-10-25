@@ -112,6 +112,7 @@ if (process.env.QA135_WORKER === '1') {
     fs.mkdirSync(appRoot);
     const copySource = process.env.QA135_SOURCE_ROOT || sourceRoot;
     for (const name of ['src', 'bundled', 'assets']) fs.cpSync(path.join(copySource, name), path.join(appRoot, name), { recursive: true });
+    fs.cpSync(path.join(copySource, 'scripts', 'lib'), path.join(appRoot, 'scripts', 'lib'), { recursive: true });
     fs.copyFileSync(path.join(sourceRoot, 'package.json'), path.join(appRoot, 'package.json'));
     fs.symlinkSync(path.join(sourceRoot, 'node_modules'), path.join(appRoot, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     const cleanup = () => { assert.equal(path.dirname(path.resolve(root)).toLowerCase(), path.resolve(os.tmpdir()).toLowerCase()); assert.match(path.basename(root), /^qqa-reset135-/); fs.rmSync(root, { recursive: true, force: true }); };

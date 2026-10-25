@@ -1,4 +1,6 @@
 // Opt-in native details enhancement. No host API, storage or permanent frame loop.
+import {interfaceMotion,observeInterfaceMotion} from './motion.js';
+
 const installed = new WeakMap();
 const targets = new WeakMap();
 export const collapsibleExpanded = details => !!details.open && (targets.get(details) ?? true);
@@ -27,7 +29,8 @@ export function installCollapsibles(doc = document) {
     details.open = want;
     const to = details.getBoundingClientRect().height;
     summary.setAttribute('aria-expanded', String(want));
-    if (media.matches || doc.visibilityState === 'hidden' || !details.animate || !from || from === to) return;
+    const preference=interfaceMotion(doc,media);
+    if (!preference.enabled || preference.scale===0 || doc.visibilityState === 'hidden' || !details.animate || !from || from === to) return;
     details.open = true;
     const state = {want, summary, inert: children.map(node => [node, node.inert]),
       overflow: details.style.getPropertyValue('overflow'), priority: details.style.getPropertyPriority('overflow'), animation: null};
@@ -35,7 +38,7 @@ export function installCollapsibles(doc = document) {
     details.style.overflow = 'hidden'; active.set(details, state); targets.set(details, want);
     try {
       state.animation = details.animate([{height: `${from}px`}, {height: `${to}px`}], {
-        duration: 220, easing: 'cubic-bezier(.2,.75,.2,1)', fill: 'both',
+        duration: 220 * preference.duration, easing: 'cubic-bezier(.2,.75,.2,1)', fill: 'both',
       });
       state.animation.finished.then(() => settle(details, state), () => settle(details, state));
     } catch { settle(details, state); }
@@ -49,7 +52,8 @@ export function installCollapsibles(doc = document) {
     event.preventDefault(); toggle(summary.parentElement, summary);
   }
   const finishAll = () => { for (const [details, state] of [...active]) settle(details, state); };
-  const policy = () => { if (media.matches || doc.visibilityState === 'hidden') finishAll(); };
+  const policy = () => { if (!interfaceMotion(doc,media).enabled || doc.visibilityState === 'hidden') finishAll(); };
+  const unobservePolicy=observeInterfaceMotion(doc,finishAll);
   const observer = new view.MutationObserver(() => {
     for (const [details, state] of active) if (!details.isConnected || !details.open) settle(details, state);
   });
@@ -58,7 +62,7 @@ export function installCollapsibles(doc = document) {
   doc.addEventListener('visibilitychange', policy);
   media.addEventListener('change', policy);
   function dispose() {
-    finishAll(); observer.disconnect(); doc.removeEventListener('click', click);
+    finishAll(); observer.disconnect(); unobservePolicy(); doc.removeEventListener('click', click);
     doc.removeEventListener('visibilitychange', policy); media.removeEventListener('change', policy);
     view.removeEventListener('pagehide', dispose); installed.delete(doc);
   }

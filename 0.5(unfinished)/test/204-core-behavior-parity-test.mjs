@@ -95,21 +95,22 @@ function runtime(t, { patch = {}, components = defaultComponents, llm, getMuted 
   };
 }
 
-test('mechanical prefix misses are archived once, including equal timestamps, before the next real run', async t => {
-  const gate = deferred(), counts = new Map();
+test('restored unread backlog archives mechanical prefix misses once, including equal timestamps', async t => {
+  const counts = new Map();
   const components = { ...defaultComponents, 'core.wake.resolve': args => {
     const count = (counts.get(args.entry.text) ?? 0) + 1; counts.set(args.entry.text, count);
     return resolveContextTier({ ...args, roll: args.entry.text === 'PREFIX-MISS' ? (count === 1 ? 90 : 10) : null });
   } };
-  const e = runtime(t, { patch: { store: { contextSliderPos: 55 } }, components, llm: async (_args, call) => { if (call === 1) await gate.promise; return finish(); } });
-  await e.incoming('INITIAL', { atMe: true });
-  await until(() => e.requests.length === 1);
+  const e = runtime(t, { patch: { store: { contextSliderPos: 55 } }, components });
+  await e.run('INITIAL', { atMe: true });
   const sameTs = Date.now();
-  const prefix = await e.incoming('PREFIX-MISS', { ts: sameTs });
-  const trigger = await e.incoming('MECHANICAL-TRIGGER', { ts: sameTs, atMe: true });
-  const tail = await e.incoming('BATCH-TAIL', { ts: sameTs + 1 });
-  assert.equal(counts.has(prefix.text), false, 'entries received during the first run wait for mechanical judgment');
-  gate.resolve();
+  // Model an unread archive restored before scheduling recovery. Messages arriving
+  // during a running session are now read immediately (spreadsheet flow, test 305).
+  const prefix = e.append('PREFIX-MISS', { ts: sameTs });
+  const trigger = e.append('MECHANICAL-TRIGGER', { ts: sameTs, atMe: true });
+  const tail = e.append('BATCH-TAIL', { ts: sameTs + 1 });
+  assert.equal(counts.has(prefix.text), false, 'restored backlog has not yet been judged');
+  e.orch.scheduleWake(groupA, 200, { verified: false });
   await until(() => e.requests.length === 2 && e.sessions.running().length === 0);
   assert.equal(counts.get(prefix.text), 1, 'the first miss can never be rerolled into a later hit');
   assert.equal(counts.get(trigger.text), 1);

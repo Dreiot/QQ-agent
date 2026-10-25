@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>我的 · QQ Agent</title>
   <link rel="stylesheet" href="../common.css"><link rel="stylesheet" href="style.css">
-</head>
+<link rel="stylesheet" href="../visual-refinements.css"></head>
 <body data-panel="community">
 <main>
   <header class="head">
@@ -15,12 +15,7 @@
     </div>
     <div class="actions">
       <button id="refresh" type="button">刷新</button>
-      <button class="ghost" id="open-market" type="button">市场网页版</button>
-      <button class="ghost" id="open-persona-plaza" type="button">人设广场</button>
       <button class="ghost" id="open-feedback" type="button">意见收集</button>
-      <button class="ghost" id="open-feedback-page" type="button">留言板网页版</button>
-      <button class="ghost" id="open-site" type="button">打开官网</button>
-      <button class="ghost" id="captcha-diagnostics" type="button">验证码诊断</button>
     </div>
   </header>
   <p id="community-link-status" class="muted" role="status" aria-live="polite"></p>
@@ -30,6 +25,14 @@
     社区用于管理发布账号、发布你写的技能/插件和收集意见。
     发布的扩展在 Node 进程内运行，不是代码沙箱，请只发布你检查过的代码。
   </p>
+
+  <nav class="community-links" aria-label="社区链接与帮助">
+    <button class="ghost" id="open-market" type="button">市场网页版</button>
+    <button class="ghost" id="open-persona-plaza" type="button">人设广场</button>
+    <button class="ghost" id="open-feedback-page" type="button">留言板网页版</button>
+    <button class="ghost" id="open-site" type="button">打开官网</button>
+    <button class="ghost" id="captcha-diagnostics" type="button">验证码诊断</button>
+  </nav>
 
   <!-- 发布账号 -->
   <section class="card" id="pane-account" aria-labelledby="account-heading">
@@ -55,8 +58,9 @@
       </div>
     </div>
     <p id="login-note" class="muted" role="status" aria-live="polite"></p>
-    <hr class="rule">
-    <h3>发布扩展</h3>
+  </section>
+  <section class="card" id="pane-publish" aria-labelledby="publish-heading">
+    <h3 id="publish-heading">发布扩展</h3>
     <div class="grid-2">
       <label>
         <span class="field-title">类型</span>

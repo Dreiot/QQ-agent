@@ -1,5 +1,6 @@
 import {ApiClient} from './api-client.js';
 import {installDisposableDialog} from '../panels/dialog-lifecycle.js';
+import {createAutoSave,mountSaveFeedback} from '../panels/settings/auto-save.js';
 
 export function consoleTokenValue(value) {
   const token=String(value ?? '').trim();
@@ -47,9 +48,16 @@ export function createTokenManagement({api,auth,sse,win=window,doc=document}={})
       finally{busy=false;save.disabled=cancel.disabled=next.disabled=false;}
     });
     const present=doc.createElement('div');present.className='console-token-row';present.append(current,reveal,copy);
-    const actions=doc.createElement('div');actions.className='dialog-actions';actions.append(cancel,save);
+    const autoSave=createAutoSave({root:ownDialog,save:async()=>{
+      const value=next.value;if(!value.trim())return;busy=true;feedback.textContent='';
+      try{await write(value);current.value=auth.token;current.type='password';reveal.textContent='显示';if(next.value===value)next.value='';}finally{busy=false;}
+    }});
+    next.addEventListener('input',()=>autoSave.schedule());
+    const guardUnload=event=>{if(autoSave.dirty){event.preventDefault();event.returnValue='';}};win.addEventListener?.('beforeunload',guardUnload);
+    const disposeFeedback=mountSaveFeedback(doc);
+    const actions=doc.createElement('div');actions.className='dialog-actions';save.hidden=true;actions.append(cancel,save);
     dialog.append(title,explanation,present,next,feedback,actions);
-    installDisposableDialog(ownDialog,{canClose:()=>!busy,onClosed:()=>{current.value='';next.value='';if(dialog===ownDialog)dialog=null;}});
+    installDisposableDialog(ownDialog,{canClose:()=>!busy||autoSave.dirty,beforeClose:()=>autoSave.dirty?autoSave.flush():undefined,onClosed:()=>{win.removeEventListener?.('beforeunload',guardUnload);autoSave.dispose();disposeFeedback();current.value='';next.value='';if(dialog===ownDialog)dialog=null;}});
     doc.body.append(dialog);dialog.showModal();next.focus();return {ok:true};
   }
   return Object.freeze({open,write});
