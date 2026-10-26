@@ -33,6 +33,10 @@ npm run desktop
 - 部分重叠贡献：[逐目标替换、方法包装与多层撤销验收](docs/composition-overlap-evidence.md)。
 - 决策记录：`../dsh-spec/NEXT-SESSION.md` §3（D-1~D-7）
 
+## 外观自定义
+
+界面外观支持在「设置 → 外观 → 点选编辑」中直接调整实际页面，可按单个元素、当前页面或同类组件设置，并自动保存。操作方式见[外观点选编辑](docs/appearance-visual-editor.md)。
+
 ## 依靠 AI 添加功能
 
 在技能、插件或社区页打开“创作扩展”，直接复制提示词；也可从[文档版提示词](docs/ai-extension-prompt.md)开始。AI 会先用日常话问清并确认需求，再自行读取[开发文档](docs/extension-authoring.md)、判断做成技能还是插件，完成制作、自检并放入对应文件夹。新功能默认禁用，由你在列表中点击启用；无需选择技术类型或自己运行命令，不会自动上传社区。需要 ZIP 时可另行打包。

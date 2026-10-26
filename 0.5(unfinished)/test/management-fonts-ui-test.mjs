@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {modelUiFixture} from './model-ui-fixture.mjs';
+import {settingsSection} from './settings-navigation.mjs';
+import {resolveScheme} from '../ui/panels/theme.js';
+const root=path.resolve(import.meta.dirname,'../.qa-local/management-fonts');fs.mkdirSync(root,{recursive:true});
+let sink;
+const native=[];
+const transport={id:'management-ui-fixture',selfId:'111',bind({onEvent}){sink=onEvent;},start(){},stop(){},status:()=>({connected:true}),actions:{listGroups:async()=>[{id:'12345',name:'测试管理群'},{id:'12346',name:'普通成员群'}],getModerationMember:async(group,user)=>({userId:user,role:group==='12346'?'member':user==='111'?'admin':'member'}),moderateGroup:async(g,op)=>native.push({g,...op})}};
+const f=await modelUiFixture({transport});const {page,frame}=f;
+const until=async(fn,msg)=>{const end=Date.now()+12000;while(!await fn()){if(Date.now()>end)throw Error(msg);await new Promise(r=>setTimeout(r,40));}};
+try{
+  const fonts=await f.request('GET','/api/ui/fonts');assert.equal(fonts.status,200);assert.ok(fonts.data.families.length>20);const bodyFont=fonts.data.families.find(n=>n==='微软雅黑')??fonts.data.families[0];
+  await settingsSection(frame,'appearance');await frame.locator('[data-appearance-group=advanced]>summary').click();await frame.locator('[data-appearance-group=personal-typography]>summary').click();
+  const fontRefresh=page.waitForResponse(response=>response.url().endsWith('/api/ui/fonts/refresh'));await frame.locator('[data-personalization-key=bodyFont]').getByRole('button',{name:'重新读取本机字体',exact:true}).click();assert.equal((await fontRefresh).status(),200);
+  for(const [key,value]of [['bodyFont',bodyFont],['titleFont','Georgia'],['codeFont','Consolas']]){const field=frame.locator(`[data-personalization-key=${key}] input`);await field.fill(value);await field.press('Tab');}
+  await until(()=>resolveScheme(f.disk().ui.uikit).codeFont==='Consolas','fonts did not save');
+  assert.ok((await page.locator('html').evaluate(n=>getComputedStyle(n).getPropertyValue('--font-sans'))).includes(bodyFont));assert.match(await frame.locator('html').evaluate(n=>getComputedStyle(n).getPropertyValue('--font-display')),/Georgia/);
+  assert.match(await frame.locator('h2').first().evaluate(n=>getComputedStyle(n).fontFamily),/Georgia/);assert.match(await page.locator('#workspace-title').evaluate(n=>getComputedStyle(n).fontFamily),/Georgia/);
+  const order=await frame.locator('#settings-sidebar a').evaluateAll(nodes=>nodes.map(n=>n.dataset.target));assert.ok(!order.includes('management'));assert.equal(order.indexOf('memory'),order.indexOf('chat')+1);
+  await page.locator('#nav button[data-panel=rules]').click();await frame.locator('.management-toolbar').waitFor();
+  await frame.getByRole('button',{name:'模板',exact:true}).click();const templates=frame.locator('dialog.management-dialog');await templates.getByRole('button',{name:'关键词管理',exact:false}).click();await frame.getByRole('button',{name:'选择适用会话',exact:true}).click();
+  const scope=frame.locator('dialog.rules-scope-dialog');await scope.locator('[data-choice-id="12345"]').getByRole('checkbox').check();await scope.getByRole('button',{name:'完成',exact:true}).click();
+  await until(()=>f.disk().management.rules[0]?.groups[0]==='12345','draft did not auto save');assert.equal(f.disk().management.rules[0].enabled,false);
+  await frame.getByRole('button',{name:'编辑节点 2 消息匹配',exact:true}).click();await frame.getByLabel('查找内容（文字匹配时必填）',{exact:true}).fill('违规');await frame.getByLabel('查找内容（文字匹配时必填）',{exact:true}).press('Tab');
+  await until(()=>f.disk().management.rules[0]?.nodes[1].config.text==='违规','node edit not saved');
+  await frame.getByRole('button',{name:'试运行',exact:true}).click();const modal=frame.locator('dialog.management-dialog');await modal.getByLabel('触发消息',{exact:true}).fill('这条违规');await modal.getByRole('button',{name:'运行模拟',exact:true}).click();await until(async()=>await modal.locator('.management-simulation-result').textContent().then(t=>t.includes('预计执行 1 次')),'simulated branch failed');assert.equal(native.length,0);
+  await modal.getByLabel('模拟机器人身份',{exact:true}).selectOption('member');await modal.getByRole('button',{name:'运行模拟',exact:true}).click();await until(async()=>await modal.locator('.management-simulation-result').textContent().then(t=>t.includes('需要机器人为群主或管理员')),'role denial invisible');await modal.getByRole('button',{name:'关闭',exact:true}).click();
+  await frame.getByLabel('启用这条规则',{exact:true}).check();await until(()=>f.disk().management.rules[0].enabled,'enable failed');
+  await frame.locator('.management-logs>summary').click();
+  await sink({kind:'group',id:'12345',type:'message',event:{user_id:'222',message_id:42,message:[{type:'text',data:{text:'违规'}}]}});await until(()=>native.length===1,'kernel event did not reach management');assert.equal(native[0].action,'mute');assert.equal(native[0].userId,'222');
+  await until(async()=>await frame.locator('.management-logs details>summary').allTextContents().then(rows=>rows.some(t=>t.includes('完成'))),'execution record did not update through SSE');
+  await frame.locator('.management-logs details>summary').first().click();await until(async()=>await frame.locator('.management-logs .management-trace').allTextContents().then(rows=>rows.some(t=>t.includes('执行禁言'))),'lazy record details did not load');
+  const invalid=structuredClone(f.disk().management);invalid.rules[0].nodes[1].next='missing';const rejected=await f.request('POST','/api/config',{management:invalid});assert.equal(rejected.status,400);assert.notEqual(f.disk().management.rules[0].nodes[1].next,'missing');
+  await frame.getByRole('button',{name:'编辑节点 4 执行禁言',exact:true}).click();await frame.locator('.management-inspector .management-connections>summary').click();await frame.getByRole('button',{name:'在然后分支添加节点',exact:true}).click();await modal.getByRole('searchbox',{name:'搜索节点',exact:true}).fill('修改群名');await modal.getByRole('button',{name:'修改群名',exact:true}).click();await modal.getByRole('button',{name:'添加到画布',exact:true}).click();assert.equal(await frame.locator('.management-node').count(),5);
+  await frame.getByLabel('新的群名',{exact:true}).fill('新的测试群名');await frame.getByLabel('新的群名',{exact:true}).press('Tab');await until(()=>f.disk().management.rules[0].nodes.length===5,'new node failed');
+  await page.screenshot({path:path.join(root,'wide.png')});await page.setViewportSize({width:800,height:1050});await page.screenshot({path:path.join(root,'narrow.png')});assert.ok(await frame.locator('body').evaluate(n=>n.scrollWidth<=n.clientWidth+1),'horizontal overflow');
+  await page.reload();await page.locator('#nav button[data-panel=settings]').click();await page.locator('#nav button[data-panel=rules]').click();await frame.locator('.management-toolbar').waitFor();await until(async()=>await frame.locator('.management-node').count()===5,'reload lost graph');assert.equal(resolveScheme(f.disk().ui.uikit).bodyFont,bodyFont);
+  assert.deepEqual(f.errors,[]);assert.equal(f.outbound(),0);console.log(JSON.stringify({fontCount:fonts.data.families.length,nativeActions:native.length,checks:['font list and CSS','three fonts persisted','section order','automatic saving','branch simulation','permission denial','kernel event integration','invalid config rejected','node catalogue','reload','narrow viewport']}));
+}finally{await f.close();}

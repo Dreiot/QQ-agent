@@ -16,6 +16,8 @@
 // 契约不变：只写 CSS 变量与少量布局 data 属性，不新增组件样式。
 
 import {accountStorageKey,accountResourceUrl} from './account-scope.js';
+import {isVideoBackground,syncBackgroundVideo} from './background-media.js';
+import {normalizeVisual,applyVisualStyles} from './visual-style.js';
 const KEY = accountStorageKey('qq-agent.theme.v1');
 
 const colorTransitionGates = new WeakMap();
@@ -100,6 +102,7 @@ const range = (key, group, label, value, min, max, step = 1, unit = 'px', extra 
 const choice = (key, group, label, value, options) => ({ key, group, label, type: 'select', default: value, options });
 export const PERSONALIZATION_FIELDS = Object.freeze([
   choice('fontFamily', 'typography', '字体', 'system', [{value:'system',label:'系统默认'},{value:'humanist',label:'圆润无衬线'},{value:'serif',label:'衬线'},{value:'mono',label:'等宽'}]),
+  ...[['bodyFont','正文字体'],['titleFont','标题字体'],['codeFont','代码字体']].map(([key,label])=>({key,label,group:'typography',type:'font',default:''})),
   range('fontSize', 'typography', '正文字号', 13, 11, 18),
   range('fontWeight', 'typography', '正文字重', 400, 300, 700, 100, ''),
   range('headingWeight', 'typography', '标题字重', 600, 400, 800, 100, ''),
@@ -180,6 +183,7 @@ export function normalizePersonalization(input = {}) {
       out[field.key] = Number.isFinite(number) ? Math.min(field.max, Math.max(field.min, number)) : field.default;
     } else if (field.type === 'boolean') out[field.key] = typeof value === 'boolean' ? value : field.default;
     else if (field.type === 'select') out[field.key] = field.options.some(option => option.value === value) ? value : field.default;
+    else if (field.type === 'font') out[field.key] = typeof value==='string'&&value.length<=160&&!/[\x00-\x1f\x7f;{}<>\\]/.test(value)?value.trim():'';
     else out[field.key] = typeof value === 'string' && /^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(value) ? value : field.default;
   }
   return out;
@@ -305,9 +309,9 @@ export const DEFAULT_THEME = {
 /** 参与方案的配色/背景键。 */
 const SCHEMA_KEYS = ['bg', 'surface', 'surface2', 'surface3', 'text', 'muted', 'faint', 'accent', 'accent2', 'good', 'warn', 'bad', 'line', 'lineSoft', 'accentInk', 'bgImage', 'bgOpacity', 'bgBlur', 'bgFit', 'bgRotate', 'bgZoom', 'bgOffsetX', 'bgOffsetY'];
 /** 形状/布局键（也属于一套完整方案）。 */
-const LAYOUT_KEYS = ['radius', 'density', 'sidebar', 'btnAlign', 'styleMode', ...PERSONALIZATION_FIELDS.map(field => field.key)];
+const LAYOUT_KEYS = ['radius', 'density', 'sidebar', 'btnAlign', 'styleMode', 'visual', ...PERSONALIZATION_FIELDS.map(field => field.key)];
 
-/** bgZoom is the width of a 16:9 selection in the original 16:9 image plane. */
+/** bgZoom is a normalized selection in the current viewport's media plane. */
 export function normalizeBackgroundCrop(input = {}) {
   const zoom = Number(input.bgZoom);
   const scale = Number.isFinite(zoom) && zoom > 0 ? Math.min(1, Math.max(0.2, zoom)) : 1;
@@ -318,7 +322,7 @@ export function normalizeBackgroundCrop(input = {}) {
     rotate: Number.isFinite(angle) ? ((angle % 360) + 360) % 360 : 0 };
 }
 
-/** Shared paint in the logical 16:9 plane; tile width scales with that plane. */
+/** Shared paint in the viewport-shaped plane; tiles scale with that plane. */
 export function backgroundPaint(fit) {
   if (fit === 'repeat') return { size: '50% auto', repeat: 'repeat', position: '0% 0%' };
   return { size: fit === 'contain' ? 'contain' : 'cover', repeat: 'no-repeat', position: '50% 50%' };
@@ -328,6 +332,7 @@ export function backgroundPaint(fit) {
 export function normalizeTheme(input) {
   const t = { ...DEFAULT_THEME, ...(input ?? {}) };
   Object.assign(t, normalizePersonalization(t));
+  t.visual = normalizeVisual(t.visual);
   if (t.gradient === undefined || t.gradient === null) t.gradient = false;
   return t;
 }
@@ -341,6 +346,7 @@ export function normalizeScheme(input, base = DEFAULT_THEME) {
   }
   if (typeof input?.gradient === 'boolean') out.gradient = input.gradient;
   Object.assign(out, normalizePersonalization(out));
+  out.visual = normalizeVisual(out.visual);
   return out;
 }
 
@@ -508,6 +514,7 @@ export function publicPanelTheme(input) {
   out.gradient = theme.gradient === true;
   out.preset = Object.hasOwn(PRESETS, theme.preset) ? theme.preset : DEFAULT_THEME.preset;
   Object.assign(out, normalizePersonalization(theme));
+  out.visual = normalizeVisual(theme.visual);
   return out;
 }
 
@@ -520,6 +527,7 @@ export function applyTheme(t) {
   const theme = normalizeTheme(t);
   const s = typeof document !== 'undefined' ? document.documentElement?.style : null;
   if (!s) return theme;
+  applyVisualStyles(document,theme.visual);
   holdThemeColorTransitions(document);
 
   const light = theme.preset === 'light' || (() => {
@@ -578,8 +586,10 @@ export function applyTheme(t) {
   const p = normalizePersonalization(theme);
   const put = (name, value, unit = '') => s.setProperty(name, `${value}${unit}`);
   put('--density', d);
-  s.setProperty('--font-sans', FONT_FAMILIES[p.fontFamily]);
-  s.setProperty('--font-display', p.fontFamily === 'system' ? "'Bahnschrift', 'Aptos Narrow', 'Arial Narrow', var(--font-sans)" : FONT_FAMILIES[p.fontFamily]);
+  s.setProperty('--font-sans', p.bodyFont ? `${JSON.stringify(p.bodyFont)}, ${FONT_FAMILIES[p.fontFamily]}` : FONT_FAMILIES[p.fontFamily]);
+  s.setProperty('--font-display', p.titleFont ? `${JSON.stringify(p.titleFont)}, var(--font-sans)` : p.fontFamily === 'system' ? "'Bahnschrift', 'Aptos Narrow', 'Arial Narrow', var(--font-sans)" : FONT_FAMILIES[p.fontFamily]);
+  s.setProperty('--font-mono', p.codeFont ? `${JSON.stringify(p.codeFont)}, monospace` : FONT_FAMILIES.mono);
+  s.setProperty('--font-heading',p.titleFont?`${JSON.stringify(p.titleFont)}, var(--font-sans)`:'var(--font-sans)');
   for (const [name,key,unit] of [
     ['--font-size','fontSize','px'], ['--font-weight','fontWeight',''], ['--heading-weight','headingWeight',''],
     ['--heading-scale','headingScale',''], ['--line-height','lineHeight',''], ['--letter-spacing','letterSpacing','px'], ['--code-font-size','codeFontSize','px'],
@@ -631,7 +641,10 @@ export function applyTheme(t) {
 
   // 背景图（可选）：地址先消毒，非法值一律当"没设"
   const bgUrl = safeBgUrl(theme.bgImage);
-  s.setProperty('--bg-image', bgUrl ? `url("${bgUrl}")` : 'none');
+  const bgVideo=isVideoBackground(bgUrl);
+  s.setProperty('--bg-image', bgUrl&&!bgVideo ? `url("${bgUrl}")` : 'none');
+  s.setProperty('--bg-video-fit',theme.bgFit==='contain'?'contain':'cover');
+  syncBackgroundVideo(document,bgVideo?bgUrl:'');
   const op = Number(theme.bgOpacity);
   s.setProperty('--bg-opacity', String(Number.isFinite(op) ? Math.min(1, Math.max(0, op)) : 0.12));
   const blur = Number(theme.bgBlur);
@@ -665,6 +678,7 @@ export function applyTheme(t) {
     body.dataset.styleMode = STYLE_MODES.has(String(theme.styleMode)) ? String(theme.styleMode) : 'endfield';
     body.dataset.gradient = theme.gradient ? 'on' : 'off';
     body.dataset.bgImage = bgUrl ? 'on' : 'off';
+    body.dataset.bgMedia = bgVideo?'video':bgUrl?'image':'none';
     // 面板侧不画背景图（只有 shell 画），否则 shell + 每个 iframe 各一层会叠成两层。
     // panels/common.css 消费这个属性把 body::before 关掉。
     body.dataset.bgOwner = 'shell';
@@ -709,6 +723,13 @@ export function writeTheme(theme, { persist = true } = {}) {
   return t;
 }
 
+/** During point-editing, change one stylesheet instead of repainting every token. */
+export function writeVisualTheme(visual) {
+  const t={...getCurrentTheme(),visual:normalizeVisual(visual)};memoryTheme=t;
+  if(typeof document!=='undefined')applyVisualStyles(document,t.visual);
+  return t;
+}
+
 /** 应用某个预设（保留用户的圆角/密度/布局等非颜色偏好）。 */
 export function applyPreset(name, base = getCurrentTheme()) {
   const preset = PRESETS[name];
@@ -736,4 +757,5 @@ if (typeof window !== 'undefined') {
   window.addEventListener('qq-theme', (e) => {
     if (e?.detail) writeTheme(e.detail, { persist: false });
   });
+  window.addEventListener('qq-visual-style',e=>writeVisualTheme(e.detail));
 }

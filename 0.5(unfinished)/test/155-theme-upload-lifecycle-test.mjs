@@ -49,9 +49,9 @@ try {
       FileReader.prototype.readAsDataURL = function(file) { window.heldReaders155.push(() => read.call(this, file)); };
     });
     await page.goto(`${base}/?token=upload155`); await page.locator('#nav button[data-panel=settings]').click();
-    const frame = page.frameLocator('#panel-host iframe'); await frame.locator('#status').filter({ hasText: '配置已读取' }).waitFor();
-    const kit = () => settingsSection(frame,'uikit'); await kit();
-    const modeTo = async mode => { await settingsSection(frame,'interface'); await frame.locator('#field-ui-uikit-mode').selectOption(mode); await kit(); };
+    const frame = page.frameLocator('#panel-host iframe'); await frame.locator('#settings-sidebar a[data-target=appearance]').waitFor({state:'visible'});
+    const kit = async () => {await settingsSection(frame,'uikit');for(const key of ['background','themes']){const fold=frame.locator(`details[data-appearance-group=${key}]`);if(!await fold.evaluate(n=>n.open))await fold.locator(':scope>summary').click();}}; await kit();
+    const modeTo = async mode => { await settingsSection(frame,'appearance');const owner=frame.locator('.setting-field:has(#field-ui-uikit-mode)');if(await owner.locator(`[role=radio][data-value="${mode}"]`).count())await owner.locator(`[role=radio][data-value="${mode}"]`).click();else await frame.locator('#field-ui-uikit-mode').selectOption(mode); await kit(); };
     const file = () => frame.locator('#section-uikit input[type=file]');
     const upload = async name => file().setInputFiles({ name: `${name}.png`, mimeType: 'image/png', buffer: png });
     const uploads = [];
@@ -87,16 +87,16 @@ try {
   });
   await check('latest upload wins out of order; normal settings save and crop still commit', async () => {
     const c = await open(); try { await c.upload('old'); const old = await c.entered(1); await c.upload('new'); const latest = await c.entered(2);
-      await settingsSection(c.frame,'persona'); await c.frame.locator('#field-persona-roleText').fill('QA155 ordinary setting'); await c.kit();
+      await settingsSection(c.frame,'interface');const nextVision=!await c.frame.locator('#field-ui-showVision').isChecked(); await c.frame.locator('.setting-field:has(#field-ui-showVision)').click(); await c.kit();
       await c.settle(latest); assert.equal(slot(kernel.config.get().ui.uikit, 'custom:A').bgImage, latest.body.url);
       assert.notEqual(old.body.url, latest.body.url, 'actual upload responses identify different stored files');
       await c.settle(old); assert.equal(slot(kernel.config.get().ui.uikit, 'custom:A').bgImage, latest.body.url);
-      assert.equal((await c.frame.locator('#status').textContent()).includes('QA155 upload failed'), false); assert.equal(disk().persona.roleText, 'QA155 ordinary setting');
+      assert.equal((await c.frame.locator('#status').textContent()).includes('QA155 upload failed'), false); assert.equal(disk().ui.showVision, nextVision);
       for (const [id, value] of [['bg-rotate', '123'], ['bg-zoom', '57']]) await c.frame.locator('#' + id).evaluate((input, value) => { input.value = value; input.dispatchEvent(new Event('input', { bubbles: true })); }, value);
       await settingsSave(c.frame);
       await until(() => slot(disk().ui.uikit, 'custom:A').bgRotate === 123 && slot(disk().ui.uikit, 'custom:A').bgZoom === .57, 'latest crop committed');
       assert.deepEqual(kernel.config.get().ui.uikit.custom.B, c.initial.custom.B); assert.deepEqual(kernel.config.get().ui.uikit.dark, c.initial.dark);
-      await c.page.goto(`${base}/?token=upload155`); await c.page.locator('#nav button[data-panel=settings]').click(); await c.frame.locator('#status').filter({ hasText: '配置已读取' }).waitFor(); await c.kit();
+      await c.page.goto(`${base}/?token=upload155`); await c.page.locator('#nav button[data-panel=settings]').click(); await c.frame.locator('#settings-sidebar a[data-target=appearance]').waitFor({state:'visible'}); await c.kit();
       assert.equal(await c.frame.locator('#bg-rotate').inputValue(), '123'); assert.equal(await c.frame.locator('#bg-zoom').inputValue(), '57');
     } finally { await c.close(); }
   });
@@ -112,13 +112,13 @@ try {
       assert.notEqual(slot(kernel.config.get().ui.uikit, 'custom:A').bgImage, '', '第一次点击保留当前背景与待替换请求');
       await clear.click(); await c.settle(call);
       assert.equal(slot(kernel.config.get().ui.uikit, 'custom:A').bgImage, ''); assert.equal(slot(disk().ui.uikit, 'custom:A').bgImage, '');
-      assert.ok((await c.frame.locator('.bg-editor').textContent()).includes('尚未选择背景图'));
+      assert.ok((await c.frame.locator('.bg-editor').textContent()).includes('尚未选择背景'));
     } finally { await c.close(); }
   });
   await check('current failure remains visible; ordinary save and a later valid upload recover', async () => {
     const c = await open('light'); try { await c.upload('failed'); const call = await c.entered(1); call.fail = true; await c.settle(call);
       assert.match(await c.frame.locator('#status').textContent(), /上传失败.*QA155 upload failed/); assert.deepEqual(kernel.config.get().ui.uikit, c.initial);
-      await settingsSection(c.frame,'persona'); await c.frame.locator('#field-persona-roleText').fill('QA155 after failure'); await settingsSave(c.frame); await until(() => disk().persona.roleText === 'QA155 after failure', 'ordinary save after failure');
+      await settingsSection(c.frame,'interface');const nextVision=!await c.frame.locator('#field-ui-showVision').isChecked(); await c.frame.locator('.setting-field:has(#field-ui-showVision)').click(); await settingsSave(c.frame); await until(() => disk().ui.showVision === nextVision, 'ordinary save after failure');
       await c.kit(); await c.upload('recover'); const good = await c.entered(2); await c.settle(good);
       assert.equal(slot(disk().ui.uikit, 'light').bgImage, good.body.url); assert.equal(slot(disk().ui.uikit, 'light').bgRotate, 0); assert.equal(slot(disk().ui.uikit, 'light').bgZoom, 1);
       assert.deepEqual(kernel.config.get().ui.uikit.custom, c.initial.custom);
@@ -170,13 +170,13 @@ try {
     const c=await open();try{await c.upload('remote-original');await c.settle(await c.entered(1));
       await c.upload('remote-replacement');const call=await c.entered(2);
       const response=await fetch(`${base}/api/config`,{method:'POST',headers:{'content-type':'application/json','x-console-token':'upload155'},body:JSON.stringify({ui:{uikit:{custom:{A:{tokens:{bgImage:''}}}}}})});assert.equal(response.status,200);
-      await c.frame.getByText('尚未选择背景图',{exact:true}).waitFor({state:'visible'});await c.settle(call);
+      await c.frame.getByText('尚未选择背景',{exact:true}).waitFor({state:'visible'});await c.settle(call);
       assert.equal(kernel.config.get().ui.uikit.mode,'custom:A');assert.equal(slot(disk().ui.uikit,'custom:A').bgImage,'');
     }finally{await c.close();}
   });
   await check('file picker opened before an ordinary same-slot refresh still starts its legitimate upload',async()=>{
     const c=await open();try{
-      const promise=c.page.waitForEvent('filechooser');await c.frame.getByRole('button',{name:'选择图片',exact:true}).click();const chooser=await promise;
+      const promise=c.page.waitForEvent('filechooser');await c.frame.getByRole('button',{name:'选择图片或视频',exact:true}).click();const chooser=await promise;
       const response=await fetch(`${base}/api/config`,{method:'POST',headers:{'content-type':'application/json','x-console-token':'upload155'},body:JSON.stringify({persona:{roleText:'QA155 chooser other console'}})});assert.equal(response.status,200);
       for(let i=0;i<100&&await chooser.element().evaluate(input=>input.isConnected);i++)await c.page.waitForTimeout(20);
       assert.equal(await chooser.element().evaluate(input=>input.isConnected),false,'real config refresh replaces the former input while its picker is open');
@@ -189,7 +189,7 @@ try {
 
   await check('a newer picker survives completion and redraw of an earlier same-slot upload',async()=>{
     const c=await open();try{await c.upload('earlier-pending');const earlier=await c.entered(1);
-      const picker=c.page.waitForEvent('filechooser');await c.frame.getByRole('button',{name:'选择图片',exact:true}).click();const chooser=await picker;
+      const picker=c.page.waitForEvent('filechooser');await c.frame.getByRole('button',{name:'选择图片或视频',exact:true}).click();const chooser=await picker;
       await c.settle(earlier);assert.equal(await chooser.element().evaluate(input=>input.isConnected),false);
       await chooser.setFiles({name:'later-picker.png',mimeType:'image/png',buffer:png});const later=await c.entered(2);await c.settle(later);
       assert.notEqual(later.body.url,earlier.body.url);assert.equal(slot(disk().ui.uikit,'custom:A').bgImage,later.body.url);

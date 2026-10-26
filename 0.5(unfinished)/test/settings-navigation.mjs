@@ -13,6 +13,7 @@ export async function openSettingsFold(frame,key){
 export async function settingsSection(frame,id){
   await closeSettingsEditors(frame);
   await frame.locator(`#settings-sidebar a[data-target="${canonical(id)}"]`).click();
+  if(id==='uikit')for(const key of ['advanced','preview']){const group=frame.locator(`details[data-appearance-group="${key}"]`);if(await group.count()&&!await group.evaluate(n=>n.open))await group.locator(':scope>summary').click();}
   const fold={wake:'activity',send:'send',active:'proactive',reset:'data',data:'data',interface:'desktop-interface',updates:'desktop-update',prices:'prices'}[id];if(fold)await openSettingsFold(frame,`layout-${fold}`);
 }
 export async function settingsEditor(frame,id){

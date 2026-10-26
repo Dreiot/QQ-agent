@@ -2,6 +2,7 @@
 // 事件分派：message / message_sent / notify.poke / group_recall / friend_recall / group_ban；
 // meta/心跳忽略。message_sent 自己发的直接 return（发送时已自行留档）。
 import { OneBotClient } from './client.js';
+import {createModerationActions} from './moderation.js';
 let favoritesIdentitySequence = 0;
 
 export function createOneBotProvider({ cfg, log = console, onEvent, onStatus, tokenCandidates, connectionResolver = null, onVerifiedConnection = null, clientFactory = null, portProbe = null, portProbeIntervalMs = 2000 }) {
@@ -84,7 +85,7 @@ export function createOneBotProvider({ cfg, log = console, onEvent, onStatus, to
     if (postType === 'message' || postType === 'message_sent') {
       const selfId = String(client.selfId ?? '');
       const uid = String(raw.user_id ?? '');
-      if (postType === 'message_sent' && uid === selfId) return; // 自己发的：已自行留档
+      if (postType === 'message_sent' && uid === selfId) {if(raw.message_type==='group')eventSink?.({kind:'group',id:String(raw.group_id),type:'message_observed',event:raw});return;} // 仅供窗口管理观察，不重复入库或触发回复
       const isGroup = raw.message_type === 'group';
       eventSink?.({
         kind: isGroup ? 'group' : 'private',
@@ -95,6 +96,9 @@ export function createOneBotProvider({ cfg, log = console, onEvent, onStatus, to
       return;
     }
     if (postType === 'notice') {
+      if(raw.notice_type==='group_increase') {eventSink?.({kind:'group',id:String(raw.group_id??''),type:'member_join',event:raw});return;}
+      const managementType={group_decrease:'member_leave',group_admin:'admin_changed',group_upload:'group_upload'}[raw.notice_type];
+      if(managementType){eventSink?.({kind:'group',id:String(raw.group_id??''),type:managementType,event:raw});return;}
       if (raw.notice_type === 'notify' && raw.sub_type === 'poke') {
         eventSink?.({ kind: raw.group_id != null ? 'group' : 'private', id: String(raw.group_id ?? raw.user_id), type: 'poke', event: raw });
         return;
@@ -108,6 +112,7 @@ export function createOneBotProvider({ cfg, log = console, onEvent, onStatus, to
         return;
       }
     }
+    if(postType==='request'&&raw.request_type==='group'&&raw.sub_type==='add')eventSink?.({kind:'group',id:String(raw.group_id??''),type:'join_request',event:raw});
   }
 
   return {
@@ -201,6 +206,7 @@ export function createOneBotProvider({ cfg, log = console, onEvent, onStatus, to
     actions: {
       // Opaque account/lifecycle identity, without exposing credentials or QQ metadata.
       getAccountIdentity: accountIdentity,
+      ...createModerationActions({client,currentIdentity:accountIdentity}),
       async poke(chatKey, { groupId, userId } = {}) {
         const kind = chatKey.split(':')[0];
         if (kind === 'group') {

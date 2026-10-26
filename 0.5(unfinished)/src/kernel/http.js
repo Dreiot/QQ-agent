@@ -24,6 +24,7 @@ const MIME = {
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.webp': 'image/webp', '.gif': 'image/gif', '.ico': 'image/x-icon',
+  '.mp4': 'video/mp4', '.webm': 'video/webm',
   '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2',
 };
 
@@ -34,7 +35,7 @@ const SHELL_CSP = [
   "script-src 'self' https://o.alicdn.com https://kondius.cn",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https:",
-  "media-src 'self' data:",
+  "media-src 'self' data: blob:",
   "connect-src 'self' https://*.aliyuncs.com https://*.alicdn.com https://kondius.cn",
   "frame-ancestors 'none'",
 ].join('; ');
@@ -306,8 +307,27 @@ export function createHttpServer({ config, log = console, bus = null, staticDir,
     // than inside the host iframe. Apply to SVG/other document types as well.
     if (isUserPanel) headers['content-security-policy'] = `${PANEL_CSP}; sandbox allow-scripts`;
     if (isPanel && req?.headers?.origin === 'null') headers['access-control-allow-origin'] = 'null';
-    res.writeHead(200, headers);
-    fs.createReadStream(file).pipe(res);
+    const size=fs.statSync(file).size;
+    headers['content-length']=size;
+    let start=0,end=size-1,status=200;
+    if(ext==='.mp4'||ext==='.webm'){
+      headers['accept-ranges']='bytes';
+      if(req.headers.range){
+        const range=/^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range).trim());
+        if(range&&(range[1]||range[2])){
+          if(range[1]){start=Number(range[1]);end=range[2]?Math.min(Number(range[2]),size-1):size-1;}
+          else{const suffix=Number(range[2]);start=Math.max(0,size-suffix);end=size-1;}
+        }else start=NaN;
+        if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<0||start>=size||end<start){
+          res.writeHead(416,{...headers,'content-range':`bytes */${size}`,'content-length':0});return res.end();
+        }
+        status=206;headers['content-range']=`bytes ${start}-${end}/${size}`;headers['content-length']=end-start+1;
+      }
+    }
+    res.writeHead(status, headers);
+    if(req.method==='HEAD'||size===0)return res.end();
+    const stream=fs.createReadStream(file,{start,end});
+    stream.on('error',()=>res.destroy());res.once('close',()=>stream.destroy());stream.pipe(res);
   }
 
   async function handleHttp(req, res) {

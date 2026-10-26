@@ -63,7 +63,7 @@ body[data-panel=settings] .settings-toggle-card .activity-switch-track {display:
   position:fixed;inset:16px 20px auto auto;margin:0;padding:11px 16px;z-index:2147483647;
   display:flex;align-items:center;gap:10px;max-width:min(460px,calc(100vw - 32px));
   border:1px solid var(--good);border-radius:10px;background:var(--surface);color:var(--text);
-  box-shadow:0 8px 30px #0005;font:13px/1.5 var(--font-ui,system-ui);
+  box-shadow:0 8px 30px #0005;font:13px/1.5 var(--font-sans,system-ui);
 }
 .settings-save-toast[hidden]{display:none!important;}
 .settings-save-toast[data-state=saved]>span:first-child{color:var(--good);}

@@ -1,0 +1,276 @@
+{
+  "format": "qqa-management-v1",
+  "rule": {
+    "id": "sl-example-12",
+    "name": "#sl → 移出、撤回 5 秒并公告",
+    "enabled": false,
+    "groups": [],
+    "cooldownSeconds": 0,
+    "nodes": [
+      {
+        "id": "sl-example-1",
+        "type": "message",
+        "config": {},
+        "next": "sl-example-2"
+      },
+      {
+        "id": "sl-example-2",
+        "type": "message_equals",
+        "config": {
+          "text": "#sl"
+        },
+        "next": "sl-example-3",
+        "otherwise": "$end"
+      },
+      {
+        "id": "sl-example-3",
+        "type": "role_is",
+        "config": {
+          "role": "member"
+        },
+        "next": "sl-example-4",
+        "otherwise": "$end"
+      },
+      {
+        "id": "sl-example-4",
+        "type": "member_info",
+        "config": {},
+        "next": "sl-example-5"
+      },
+      {
+        "id": "sl-example-5",
+        "type": "kick",
+        "config": {},
+        "next": "sl-example-6"
+      },
+      {
+        "id": "sl-example-6",
+        "type": "branch_value",
+        "config": {
+          "condition": false
+        },
+        "next": "sl-example-7",
+        "otherwise": "$end",
+        "bindings": {
+          "condition": {
+            "nodeId": "sl-example-5",
+            "port": "success"
+          }
+        }
+      },
+      {
+        "id": "sl-example-7",
+        "type": "counter_daily",
+        "config": {
+          "key": "#sl成功移出人数",
+          "scope": "group",
+          "amount": 1
+        },
+        "next": "sl-example-8",
+        "bindings": {
+          "at": {
+            "nodeId": "sl-example-5",
+            "port": "completed_at"
+          }
+        }
+      },
+      {
+        "id": "sl-example-8",
+        "type": "recall_window",
+        "config": {
+          "seconds": 5
+        },
+        "next": "sl-example-9",
+        "bindings": {
+          "start_time": {
+            "nodeId": "sl-example-1",
+            "port": "time"
+          }
+        }
+      },
+      {
+        "id": "sl-example-9",
+        "type": "send_text",
+        "config": {
+          "text": ""
+        },
+        "next": "$end",
+        "bindings": {
+          "text": {
+            "nodeId": "sl-example-11",
+            "port": "text"
+          }
+        }
+      },
+      {
+        "id": "sl-example-10",
+        "type": "time_format",
+        "config": {
+          "format": "datetime"
+        },
+        "bindings": {
+          "time": {
+            "nodeId": "sl-example-5",
+            "port": "completed_at"
+          }
+        }
+      },
+      {
+        "id": "sl-example-11",
+        "type": "format_text",
+        "config": {
+          "template": "{{a}}（qq：{{b}}）于{{c}}被移出群聊！此人为今日第{{d}}个因发送#sl被移出群聊的成员。"
+        },
+        "bindings": {
+          "a": {
+            "nodeId": "sl-example-4",
+            "port": "nickname"
+          },
+          "b": {
+            "nodeId": "sl-example-1",
+            "port": "user_id"
+          },
+          "c": {
+            "nodeId": "sl-example-10",
+            "port": "text"
+          },
+          "d": {
+            "nodeId": "sl-example-7",
+            "port": "value"
+          }
+        }
+      }
+    ],
+    "layout": {
+      "version": 1,
+      "positions": {
+        "sl-example-1": {
+          "x": 70,
+          "y": 70
+        },
+        "sl-example-2": {
+          "x": 450,
+          "y": 70
+        },
+        "sl-example-3": {
+          "x": 830,
+          "y": 70
+        },
+        "sl-example-4": {
+          "x": 1210,
+          "y": 70
+        },
+        "sl-example-5": {
+          "x": 1590,
+          "y": 70
+        },
+        "sl-example-6": {
+          "x": 70,
+          "y": 620
+        },
+        "sl-example-7": {
+          "x": 450,
+          "y": 620
+        },
+        "sl-example-8": {
+          "x": 830,
+          "y": 620
+        },
+        "sl-example-9": {
+          "x": 1210,
+          "y": 620
+        },
+        "sl-example-10": {
+          "x": 70,
+          "y": 1140
+        },
+        "sl-example-11": {
+          "x": 830,
+          "y": 1140
+        }
+      },
+      "visiblePorts": {
+        "sl-example-1": {
+          "outputs": [
+            "user_id",
+            "time"
+          ]
+        },
+        "sl-example-2": {
+          "inputs": [
+            "text"
+          ],
+          "outputs": []
+        },
+        "sl-example-3": {
+          "inputs": [
+            "role"
+          ],
+          "outputs": []
+        },
+        "sl-example-4": {
+          "inputs": [],
+          "outputs": [
+            "nickname"
+          ]
+        },
+        "sl-example-5": {
+          "inputs": [],
+          "outputs": [
+            "success",
+            "completed_at"
+          ]
+        },
+        "sl-example-6": {
+          "inputs": [
+            "condition"
+          ],
+          "outputs": []
+        },
+        "sl-example-7": {
+          "inputs": [
+            "at"
+          ],
+          "outputs": [
+            "value"
+          ]
+        },
+        "sl-example-8": {
+          "inputs": [
+            "start_time",
+            "seconds"
+          ],
+          "outputs": [
+            "recalled",
+            "failed"
+          ]
+        },
+        "sl-example-9": {
+          "inputs": [
+            "text"
+          ],
+          "outputs": []
+        },
+        "sl-example-10": {
+          "inputs": [
+            "time"
+          ],
+          "outputs": [
+            "text"
+          ]
+        },
+        "sl-example-11": {
+          "inputs": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "outputs": [
+            "text"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import {currentAccountScope} from '../panels/account-scope.js';
 
-const EVENT_NAMES=['hello','accounts','session-start','session-update','session-delta','price-update','blocklist-sync','session-end','chat-update','memory-update','onebot-status','local-protocols','protocol-login','status','feedback','vision-scan','permission-ask','permission-decision','log','plugin-loaded','plugin-unloaded','plugin-error'];
+const EVENT_NAMES=['hello','accounts','session-start','session-update','session-delta','price-update','blocklist-sync','management-update','session-end','chat-update','memory-update','onebot-status','local-protocols','protocol-login','status','feedback','vision-scan','permission-ask','permission-decision','log','plugin-loaded','plugin-unloaded','plugin-error'];
 
 export class SseClient {
   constructor({token='',base=currentAccountScope.base,endpoint='/api/events',onEvent=()=>{},onState=()=>{},retryDelay=1500,recoverAuth=null}={}) {

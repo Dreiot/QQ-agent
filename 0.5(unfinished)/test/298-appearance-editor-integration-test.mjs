@@ -18,6 +18,7 @@ const row=key=>frame.locator(`.personalization-field[data-personalization-key="$
 const field=key=>frame.locator(`#field-uikit-${key}`);
 const auto=spec=>row(spec.key).getByRole('switch',{name:`${spec.label}自动`,exact:true});
 const openGroup=async key=>{
+  const advanced=frame.locator('details[data-appearance-group="advanced"]');if(!await advanced.evaluate(n=>n.open))await advanced.locator(':scope>summary').click();
   const group=frame.locator(`details[data-appearance-group="personal-${key}"]`);
   if(!await group.evaluate(element=>element.open))await group.locator(':scope>summary').click();
   await group.waitFor({state:'visible'});return group;
@@ -42,7 +43,7 @@ async function edit(spec,value){
     await field(spec.key).evaluate((input,value)=>{input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));},value);
   }else if(spec.type==='select'){
     await row(spec.key).locator(`[role=radio][data-value="${value}"]`).click();
-  }else await field(spec.key).setChecked(value);
+  }else if(spec.type==='font')await field(spec.key).fill(value);else await field(spec.key).setChecked(value);
 }
 async function mode(value){
   const owner=frame.locator('.setting-field:has(#field-ui-uikit-mode)');
@@ -52,7 +53,7 @@ async function mode(value){
 const edits={fontFamily:'humanist',fontSize:14,fontWeight:500,headingWeight:700,headingScale:1.05,lineHeight:1.7,letterSpacing:.1,codeFontSize:12,radiusButton:10,radiusInput:9,radiusCard:12,radiusDialog:14,buttonShape:'round',borderWidth:1.5,shadowStrength:1.1,shadowBlur:36,controlHeight:40,controlFontSize:13,controlFontWeight:700,inputFontSize:14,choiceSize:16,rangeHeight:22,buttonPaddingX:13,buttonPaddingY:8,inputPaddingX:13,inputPaddingY:8,sidebarWidth:240,rail:'#202324',settingsSidebarWidth:190,navigationFontSize:14,navigationHeight:48,navigationIconScale:1.05,navigationGap:6,topbarHeight:48,pagePadding:18,cardPadding:18,listGap:14,tablePaddingX:14,tablePaddingY:10,tableFontSize:13,scrollbarWidth:7,dialogWidth:600,dialogPadding:26,overlayOpacity:.55,backdropBlur:2,hoverColor:'#416b63',selectedColor:'#615c85',focusColor:'#aabb88',hoverTint:12,selectedTint:14,focusWidth:2.5,hoverLift:1.5,disabledOpacity:.5,iconSize:22,iconStroke:2,iconMotionScale:1.2,iconMotionSpeed:1.2,iconMotionEnabled:false,motionDuration:1.1,motionScale:1.1,interfaceMotionEnabled:false};
 
 Object.assign(edits,{rippleEnabled:false,rippleColor:'#27a8cb',rippleSpread:18,rippleSpeed:1.75});
-Object.assign(edits,{brandIconSize:44,brandMotionSpeed:.5});
+Object.assign(edits,{brandIconSize:44,brandMotionSpeed:.5,bodyFont:'微软雅黑',titleFont:'Georgia',codeFont:'Consolas'});
 
 try{
   await settingsSection(frame,'appearance');
@@ -133,7 +134,7 @@ try{
 
   const themes=frame.locator('details[data-appearance-group="themes"]');if(!await themes.evaluate(element=>element.open))await themes.locator(':scope>summary').click();
   await frame.locator('#uikit-scheme-name').fill('Synthetic detailed theme');
-  await themes.getByRole('button',{name:/^(＋\s*)?主题$/}).click();
+  await themes.getByRole('button',{name:/^(＋\s*)?另存主题$/}).click();
   const customMode=await until(()=>qa.disk().ui.uikit.mode,value=>value.startsWith('custom:'),'custom scheme was not created');
   await saved(edits);assert.deepEqual(Object.fromEntries(fields.map(field=>[field.key,resolveScheme(qa.disk().ui.uikit)[field.key]])),edits);
   await mode('light');await until(()=>qa.disk().ui.uikit.mode,value=>value==='light','light base did not save');

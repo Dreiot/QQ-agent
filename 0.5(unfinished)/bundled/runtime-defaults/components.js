@@ -58,6 +58,9 @@ import { createAccountManager } from '../../src/accounts/manager.js';
 import { createAccountGateway } from '../../src/accounts/gateway.js';
 import { registerAccountRoutes } from '../../src/accounts/routes.js';
 import { registerLocalProtocolRoutes } from '../../src/console/local-protocols.js';
+import {registerLocalFontRoutes} from '../../src/console/local-fonts.js';
+import {createGroupManagement} from '../../src/management/runtime.js';
+import {registerGroupManagementRoutes} from '../../src/console/group-management.js';
 
 export {
   createKernel, createLogger, createLogPolicy, buildDefaultConfig, createConfig, createCapabilityRegistry,
@@ -127,6 +130,7 @@ export const defaultComponents = Object.freeze({
   'core.reply.rescue': rescueUnsentReply,
   'core.session.retryable': isRetryableError,
   'core.ingest': createIngest,
+  'core.management': createGroupManagement,
   'core.send': createSendQueue,
   'core.orchestrator': createOrchestrator,
   'core.prompt.system': buildSystemPrompt,
@@ -140,6 +144,8 @@ export const defaultComponents = Object.freeze({
   'console.routes': registerComposedConsoleRoutes,
   'console.extensionUpdates': createExtensionUpdateController,
   'console.localProtocols': registerLocalProtocolRoutes,
+  'console.localFonts': registerLocalFontRoutes,
+  'console.management': registerGroupManagementRoutes,
   'console.personaTemplates': createPersonaTemplateController,
   'console.personaByChat': createPersonaByChatController,
   'console.feedbackDraft': createFeedbackDraftController,

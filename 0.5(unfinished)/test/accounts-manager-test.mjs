@@ -420,6 +420,28 @@ test('removing one account preserves private data, other connections and explici
 test('removed native candidates remain hidden after restart without deleting a directory',async()=>{
   const h=await harness();try{await h.manager.remove({accountId:'456789'});assert.ok((await h.manifest()).removedAccounts.includes('456789'));await h.manager.close();const next=createAccountManager({appRoot:h.appRoot,dataDir:h.dataDir,config:{get:()=>h.settings},getPrimary:()=>h.primary,bus:h.bus});try{await next.restore();assert.ok((await next.snapshot()).removedAccounts.some(a=>a.accountId==='456789'));}finally{await next.close();}}finally{await h.manager.close();}
 });
+test('new accounts never inherit enabled group management; existing account rules survive reconnection',async()=>{
+  const h=await harness();try{
+    h.settings.management={version:1,rules:[{id:'primary-rule',enabled:true}]};
+    const a=await h.manager.registerConnection(binding());assert.deepEqual((await h.childConfig(a.workspaceId)).management,{version:1,rules:[]});
+    const file=path.join(h.children[0].init.dataDir,'config.json'),config=await read(file);const own={version:1,rules:[{id:'own-rule',enabled:false}]};await fs.writeFile(file,JSON.stringify({...config,management:own}));
+    await h.manager.registerConnection(binding());assert.deepEqual((await h.childConfig(a.workspaceId)).management,own);
+    const b=await h.manager.registerConnection(binding(qq2));assert.deepEqual((await h.childConfig(b.workspaceId)).management,{version:1,rules:[]});assert.equal(h.settings.management.rules[0].enabled,true);
+  }finally{await h.manager.close();}
+});
+test('failed registry writes leave no phantom account and preserve existing account intent',async()=>{
+ const h=await harness();let blocked=false;const file=path.join(h.dataDir,'accounts.json'),backup=file+'.audit-backup';
+ try{const first=await h.manager.registerConnection(binding());await h.manager.stop(first.workspaceId);const before=await h.manager.snapshot();await fs.rename(file,backup);await fs.mkdir(file);blocked=true;
+   await assert.rejects(h.manager.registerConnection(binding(qq2)));await assert.rejects(h.manager.registerConnection(binding(qq1,{nickname:'must-not-be-retained',provider:'snowluma'})));await assert.rejects(h.manager.start(first.workspaceId));
+   await fs.rmdir(file);await fs.rename(backup,file);blocked=false;const after=await h.manager.snapshot();assert.equal(after.accounts.length,before.accounts.length);const row=after.accounts.find(a=>a.id===first.workspaceId);assert.equal(row.wanted,false);assert.equal(row.nickname,'测试账号');assert.equal(row.provider,'napcat');assert.equal(h.children.length,1);
+ }finally{if(blocked){await fs.rmdir(file);await fs.rename(backup,file);}await h.manager.close();}
+});
+test('failed disconnect persistence keeps the running connection and its enabled intent',async()=>{
+ const h=await harness();let blocked=false;const file=path.join(h.dataDir,'accounts.json'),backup=file+'.audit-backup';
+ try{const first=await h.manager.registerConnection(binding()),backend=h.manager.backend(first.workspaceId);await fs.rename(file,backup);await fs.mkdir(file);blocked=true;await assert.rejects(h.manager.stop(first.workspaceId));await fs.rmdir(file);await fs.rename(backup,file);blocked=false;const row=(await h.manager.snapshot()).accounts.find(a=>a.id===first.workspaceId);assert.equal(row.wanted,true);assert.equal(row.connected,true);assert.deepEqual(h.manager.backend(first.workspaceId),backend);
+ }finally{if(blocked){await fs.rmdir(file);await fs.rename(backup,file);}await h.manager.close();}
+});
+
 let passed = 0; const failures = [];
 try { for (const { name, run } of cases) { try { await run(); passed++; console.log('PASS accounts manager ' + name); } catch (error) { failures.push(error); console.error('FAIL accounts manager ' + name + ': ' + error.message); } } }
 finally { clearInterval(keepAlive); for (const root of roots) { assert.equal(path.dirname(root), path.resolve(os.tmpdir())); assert.ok(path.basename(root).startsWith('qqa-account-manager-')); await fs.rm(root, { recursive: true, force: true }); } }

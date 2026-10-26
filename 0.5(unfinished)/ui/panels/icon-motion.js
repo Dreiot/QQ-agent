@@ -27,6 +27,7 @@ function plans(icon,scale){
   const turn=(name,degrees=12,duration=2000)=>wave(name,(n,s)=>'rotate('+(n*degrees*s).toFixed(4)+'deg)',0,duration);
   const grow=(name,amount=.12,phase=0,duration=1800)=>wave(name,(n,s)=>'scale('+(1-(n+1)*amount*s/2).toFixed(4)+')',phase,duration);
   switch(icon.dataset.iconMotion){
+    case 'rules':return[grow('nodes',.18,0,2000)];
     case 'sessions':return[x('cursor',1.35)];
     case 'chats':return[y('message',1.35)];
     case 'memory':return[turn('portrait',14)];

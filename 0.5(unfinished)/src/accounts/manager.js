@@ -143,7 +143,7 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
   const emit = (id, status) => { try { bus?.emit?.('accounts', { revision: ++revision, id, status }); } catch {} };
   const failed = id => { const runtime = runtimes.get(id) || { id }; if (!(runtime.status === 'running' && alive(runtime.child) && runtime.port)) runtime.status = 'error'; runtime.error ||= '此账号工作区未能完成操作，请检查数据目录和实例状态。'; runtimes.set(id, runtime); emit(id, runtime.status); };
   const serial = (id, work) => { const pending = (queues.get(id) || Promise.resolve()).catch(() => {}).then(work); queues.set(id, pending); pending.finally(() => { if (queues.get(id) === pending) queues.delete(id); }).catch(() => {}); return pending; };
-  const registry = work => { const next = registryQueue.catch(() => {}).then(work); registryQueue = next; return next; };
+  const registry = work => { const next = registryQueue.then(work); registryQueue = next.catch(() => {}); return next; };
   async function init() {
     if (!initialized) initialized = (async () => {
       await directory(root); await directory(accountsRoot);
@@ -194,8 +194,8 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
   async function observePrimary() {
     await init(); const observed = guardPrimary();
     if (!closed && !registryError && !primaryAccount && observed.accountId) {
-      primaryAccount = { accountId: observed.accountId, nickname: observed.nickname };
-      await registry(save); guardPrimary(); emit('primary', 'bound');
+      const binding = { accountId: observed.accountId, nickname: observed.nickname };primaryAccount = binding;
+      try{await registry(save);}catch(error){if(primaryAccount===binding)primaryAccount=null;throw error;}guardPrimary(); emit('primary', 'bound');
     }
     // A status event may have started binding before this caller arrived.
     // Do not report startup/restoration ready while that manifest is pending.
@@ -299,7 +299,7 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
   }
   async function stopInternal(id, explicit) {
     const record = records.get(id); if (!record) throw fail('账号工作区不存在。', 404);
-    if (explicit) { record.wanted = false; await registry(save); }
+    if (explicit) { await registry(async()=>{const previous=record.wanted;record.wanted=false;try{await save();}catch(error){record.wanted=previous;throw error;}}); }
     const runtime = runtimes.get(id); if (!runtime?.child || !alive(runtime.child)) { if (runtime) runtime.status = 'stopped'; emit(id, 'stopped'); return { workspaceId: id }; }
     runtime.status = 'stopping'; runtime.port = null; emit(id, 'stopping');
     await bind(runtime.child, { type: 'account.stop', generation: runtime.generation }).catch(() => {});
@@ -316,9 +316,10 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
     if (primaryAccount?.accountId === selected.accountId) {await registry(async()=>{if(!removedAccounts.delete(selected.accountId))return;try{await save();}catch(error){removedAccounts.add(selected.accountId);throw error;}});return { workspaceId: 'primary' };}
     const record = await registry(async () => {
       let row = [...records.values()].find(item => item.accountId === selected.accountId);
+      const previous = row ? { ...row } : null;
       if (!row) { row = { id: crypto.randomUUID(), accountId: selected.accountId, nickname: selected.nickname, provider: selected.provider, wanted: true }; records.set(row.id, row); }
       else { row.nickname = selected.nickname || row.nickname; row.provider = selected.provider; row.wanted = true; }
-      const removed=removedAccounts.delete(selected.accountId);try{await save();}catch(error){if(removed)removedAccounts.add(selected.accountId);throw error;}return row;
+      const removed=removedAccounts.delete(selected.accountId);try{await save();}catch(error){if(previous)Object.assign(row,previous);else records.delete(row.id);if(removed)removedAccounts.add(selected.accountId);throw error;}return row;
     });
     return serial(record.id, async () => {
       await usable();if(removedAccounts.has(record.accountId))throw fail('账号已移除，请重新选择账号接入。',409);const runtime = runtimes.get(record.id);
@@ -328,7 +329,8 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
       const initial = previous || structuredClone(config.get());
       if (!previous && initial.ui) initial.ui = await seedBackgrounds(initial.ui, root, dirs.dataDir);
       await atomicJson(dirs.file, { ...initial, onebot: selected.onebot,
-        ...(!previous ? { extensions: { ...initial.extensions, providers: {} } } : {}),
+        // New accounts must explicitly choose their own moderation rules.
+        ...(!previous ? { extensions: { ...initial.extensions, providers: {} },management:{version:1,rules:[]} } : {}),
         server: { ...initial.server, token: '', port: 0, autoStart: false }, desktop: { ...initial.desktop, autoStart: false },
         localProtocols: { selectedId: '', account: '', autoStart: false } });
       return startInternal(record.id);
@@ -348,7 +350,7 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
     finally { primaryTransition = ''; guardPrimary(); emit('primary', primaryConnectionError ? 'error' : enabled ? 'running' : 'stopped'); }
     return { workspaceId: 'primary' };
   }
-  async function start(id) { await usable(); if (id === 'primary') return serial(id, () => setPrimaryConnection(true)); if (!records.has(id)) throw fail('账号工作区不存在。', 404); return serial(id, async () => {if(removedAccounts.has(records.get(id).accountId))throw fail('账号已移除，请通过连接 QQ 重新添加。',409);await registry(async () => { records.get(id).wanted = true; await save(); }); return startInternal(id); }).catch(error => { failed(id); throw error; }); }
+  async function start(id) { await usable(); if (id === 'primary') return serial(id, () => setPrimaryConnection(true)); if (!records.has(id)) throw fail('账号工作区不存在。', 404); return serial(id, async () => {if(removedAccounts.has(records.get(id).accountId))throw fail('账号已移除，请通过连接 QQ 重新添加。',409);await registry(async () => { const row=records.get(id),previous=row.wanted;row.wanted=true;try{await save();}catch(error){row.wanted=previous;throw error;} }); return startInternal(id); }).catch(error => { failed(id); throw error; }); }
   async function stop(id) { await usable(); return serial(id, () => id === 'primary' ? setPrimaryConnection(false) : stopInternal(id, true)); }
   // Removal forgets the visible connection, retaining the private workspace so
   // explicitly adding the same QQ again restores its own settings and history.

@@ -36,6 +36,7 @@ export function buildDefaultConfig({ portOffset = 0, personaText = '' } = {}) {
       priceInputPerM: 0, priceOutputPerM: 0, priceCachedPerM: 0,
       useOfficialPrice: true, modelPrices: {},
     },
+    management:{version:1,rules:[]},
     providers: [],
     dshProviderKeys: {},
     providersSourceYaml: '',

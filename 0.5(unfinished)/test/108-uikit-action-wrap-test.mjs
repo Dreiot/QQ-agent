@@ -97,7 +97,7 @@ try {
       assert.equal(await frame.locator('body').evaluate(body => Math.max(body.scrollWidth, body.ownerDocument.documentElement.scrollWidth) - body.ownerDocument.documentElement.clientWidth), 0, `${preset.label} also fits after its visual style is applied`);
     }
     await frame.locator('[data-appearance-group=themes] > summary').click();await frame.locator('#uikit-scheme-name').fill(`108-${size.width}`);
-    await frame.getByRole('button', { name: '主题', exact: true }).click();
+    await frame.getByRole('button', { name: '另存主题', exact: true }).click();
     await frame.locator('#section-appearance .settings-list-row').filter({hasText:`108-${size.width}`}).waitFor();
     const scheme = frame.locator('#section-appearance .settings-list-row').filter({ hasText: `108-${size.width}` });
     await scheme.locator('input[id^="uikit-rename-"]').fill(`108-${size.width}-renamed`);

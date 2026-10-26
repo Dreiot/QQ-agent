@@ -1,0 +1,26 @@
+import {createListChoiceDraft,renderQQChoiceRows} from './settings/list-choice.js';
+import {createAutoSave,flushAutoSaves,saveFeedback} from './settings/auto-save.js';
+import {installDisposableDialog} from './dialog-lifecycle.js';
+import {createIcon} from './icons.js';
+
+export function openConversationPicker({groups=[],privateIds=[],load,commit,isCurrent=()=>true,onClosed=()=>{}}){
+  const doc=document,el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
+  const root=el('dialog','settings-list-choice rules-scope-dialog'),head=el('div','dialog-head'),title=el('h3','','选择适用会话'),close=el('button');close.type='button';close.setAttribute('aria-label','关闭');close.append(createIcon('close'));head.append(title,close);
+  const tabs=el('div','rules-scope-tabs'),search=el('input'),notice=el('p','muted'),count=el('p','muted'),list=el('div','list-choice-rows'),manual=el('div','rules-scope-manual'),numbers=el('input'),add=el('button','','添加号码'),retry=el('button','','重新读取列表'),done=el('button','primary','完成'),actions=el('div','actions');
+  search.type='search';search.placeholder='搜索名称或号码';search.setAttribute('aria-label','搜索名单');numbers.placeholder='多个号码用空格分隔';numbers.setAttribute('aria-label','手动添加号码');add.type=retry.type=done.type='button';manual.append(numbers,add);actions.append(retry,done);notice.setAttribute('role','status');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','会话类型');list.setAttribute('role','tabpanel');list.id='rule-scope-list';list.setAttribute('aria-label','可选会话');root.append(head,tabs,search,notice,count,list,manual,actions);
+  const states={groups:createListChoiceDraft(groups),friends:createListChoiceDraft(privateIds)},loaded=new Set(),loading=new Set(),buttons=new Map();let kind=groups.length||!privateIds.length?'groups':'friends',closed=false;
+  const automatic=createAutoSave({root,dirty:()=>Object.values(states).some(state=>state.view().pending),save:async()=>{
+    for(const type of ['groups','friends']){const state=states[type];if(!state.view().pending)continue;if(!isCurrent())throw Error('规则已切换，请重新打开选择器');const sent=state.beginCommit();if(!sent)throw Error('请等待读取完成后重试');if(sent.noop)continue;
+      try{await commit(type,sent.selected);state.acceptCommit(sent);}catch(error){state.rejectCommit(sent,error);status();throw error;}
+    }status();
+  }});
+  const lifecycle=installDisposableDialog(root,{dismissOnBackdrop:true,beforeClose:()=>flushAutoSaves(root),onClosed(){closed=true;automatic.dispose();Object.values(states).forEach(state=>state.close());onClosed();}});
+  for(const [type,label]of [['groups','群聊'],['friends','私聊']]){const b=el('button','',label);b.type='button';b.setAttribute('role','tab');b.setAttribute('aria-controls',list.id);b.addEventListener('click',()=>{kind=type;search.value='';draw();if(!loaded.has(type)&&!loading.has(type))void read(type);});buttons.set(type,b);tabs.append(b);}
+  function status(){if(closed)return;const view=states[kind].view(),offline=/能力未就绪|未连接|连接失败|ECONNREFUSED/.test(view.error);count.textContent=`已选 ${view.selected.length} 项`;notice.textContent=offline?'QQ 尚未连接，可先手动添加号码。':view.error.replaceAll('白名单','选择')||(loading.has(kind)?'正在读取列表…':!view.candidates.length?'暂无可选会话，可重试或手动添加号码。':'');notice.className=view.error&&!offline?'field-error':'muted';retry.disabled=loading.has(kind);for(const [type,b]of buttons){b.setAttribute('aria-selected',String(type===kind));b.tabIndex=type===kind?0:-1;b.textContent=(type==='groups'?'群聊':'私聊')+' · '+states[type].view().selected.length;}}
+  function draw(){if(closed)return;root.dataset.choiceKind=kind;renderQQChoiceRows({doc,host:list,view:states[kind].view(),query:search.value,disabled:!isCurrent(),onChange:(id,checked)=>{states[kind].choose(id,checked);status();automatic.schedule();}});status();}
+  async function read(type=kind){const state=states[type],ticket=state.beginRead();if(ticket===null)return;loading.add(type);if(kind===type)draw();try{const payload=await load(type);if(!closed&&isCurrent()){state.acceptRead(ticket,payload,type);loaded.add(type);}}catch(error){state.rejectRead(ticket,error);}finally{loading.delete(type);if(kind===type)draw();}}
+  add.addEventListener('click',()=>{const values=numbers.value.split(/[\s,，]+/).filter(Boolean);if(!values.length||values.some(id=>!/^[1-9]\d{0,14}$/.test(id))){saveFeedback('error','请填写有效号码');return;}let changed=false;for(const id of values)changed=states[kind].add(id)||changed;if(changed){numbers.value='';draw();automatic.schedule();}});
+  tabs.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?'groups':event.key==='End'?'friends':kind==='groups'?'friends':'groups';buttons.get(next).click();buttons.get(next).focus();});
+  numbers.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();add.click();}});
+  search.addEventListener('input',draw);retry.addEventListener('click',()=>void read());done.addEventListener('click',()=>lifecycle.close());close.addEventListener('click',()=>lifecycle.close());doc.body.append(root);draw();root.showModal();void read();return{root,dispose:()=>lifecycle.dispose()};
+}

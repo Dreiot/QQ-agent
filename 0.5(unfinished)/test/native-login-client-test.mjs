@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   authenticateNative, readNativeLogin, refreshNativeQr, injectNativeProcess,
-  normalizeSnowProcesses, prepareSnowConnection, NativeLoginError,
+  normalizeSnowProcesses, prepareSnowConnection, snowConnection, NativeLoginError,
 } from '../src/protocols/native-login-client.js';
 
 let passed = 0;
@@ -191,7 +191,7 @@ test('SnowLuma process snapshot exposes only usable process descriptions', async
   assert.equal(processes[1].selectable, false);
   assert.equal(processes[2].selectable, true);
   assert.equal(processes[3].selectable, false);
-  assert.equal(processes[4].selectable, false);
+  assert.equal(processes[4].selectable, true, 'an injected but disconnected process supports pipe refresh');
   assert.equal(JSON.stringify(processes).includes('raw-secret'), false);
   assert.equal(JSON.stringify(processes).includes(credential), false);
   const stub = scripted([{ path: '/api/agreements', value: {} }, { path: '/api/auth/state', value: {} }, { path: '/api/processes', value: { list: raw }, check: options => {
@@ -275,7 +275,8 @@ test('Snow connection preparation preserves a full per-account snapshot and unre
       assert.equal(options.body.networks.wsServers[1].role, 'Universal');
       assert.equal(options.body.networks.wsServers[1].customWs, 'keep');
     } }]);
-  assert.equal(await prepareSnowConnection({ request: stub.request, credential, accountId: '12345678', httpPort: 19201, wsPort: 19202, token: credential }), undefined);
+  const prepared = await prepareSnowConnection({ request: stub.request, credential, accountId: '12345678', httpPort: 19201, wsPort: 19202, token: credential });
+  assert.equal(prepared.httpPort, 19201); assert.equal(prepared.wsPort, 19202); assert.equal(typeof prepared.rollback, 'function');
   assert.deepEqual(snapshot, before, 'the read snapshot is never mutated'); stub.done();
 });
 
@@ -330,6 +331,45 @@ test('Snow live identity never falls back to an outdated or invalid desktop acco
     { pid: 4, loggedIn: false, uin: '0', account: { uin: '12345678', nickname: '桌面账号' }, status: 'available' },
   ]);
   assert.deepEqual(rows.map(item => [item.accountId, item.nickname]), [['87654321', ''], ['12345678', '当前账号'], ['', ''], ['12345678', '桌面账号']]);
+});
+
+test('injected disconnected processes refresh their pipe instead of loading a second DLL',async()=>{
+  const stub=scripted([{path:'/api/processes',value:{list:[{pid:123,account:{uin:'12345678'},injected:true,connected:false,status:'disconnected'}]}},{path:'/api/processes/123/refresh',value:{success:true}}]);
+  await injectNativeProcess({request:stub.request,credential,pid:123,expectedAccountId:'12345678'});stub.done();
+});
+test('connection reuse performs no write and rejects insecure or ambiguous named listeners',async()=>{
+  const {mergeProtocolConnection}=await import('../src/protocols/adapters.js');
+  const config=mergeProtocolConnection({},{provider:'snowluma',httpPort:19201,wsPort:19202,token:credential});
+  const stub=scripted([{path:'/api/config/12345678',value:{config}}]);
+  const result=await prepareSnowConnection({request:stub.request,credential,accountId:'12345678',httpPort:19301,wsPort:19302,token:'replacement',reuseExisting:true,verifySaved:true});
+  assert.deepEqual(result,{httpPort:19201,wsPort:19202,token:credential});stub.done();
+  for(const edit of [c=>c.networks.httpServers.push(c.networks.httpServers[0]),c=>c.networks.wsServers[0].accessToken='different',c=>c.networks.httpServers[0].host='0.0.0.0',c=>c.networks.wsServers[0].enabled=false]){const c=structuredClone(config);edit(c);assert.equal(snowConnection(c),null);}
+});
+test('successful save must read back the expected settings; rollback keeps unrelated new endpoints',async()=>{
+  let config={networks:{httpServers:[{name:'foreign',port:19101}],wsServers:[]}},posts=0;
+  const request=async(_path,options)=>{if(options.method==='POST'){posts++;config=structuredClone(options.body);return{success:true,saved:true,applied:true,online:true};}return{config:structuredClone(config)};};
+  const prepared=await prepareSnowConnection({request,credential,accountId:'12345678',httpPort:19201,wsPort:19202,token:credential,verifySaved:true});
+  config.networks.httpServers.push({name:'another-program',port:19103});await prepared.rollback();assert.equal(posts,2);assert.deepEqual(config.networks.httpServers,[{name:'foreign',port:19101},{name:'another-program',port:19103}]);assert.deepEqual(config.networks.wsServers,[]);
+});
+test('a partial apply restores owned settings; a concurrent owned edit is never overwritten',async()=>{
+  for(const concurrent of [false,true]){
+    let config={networks:{httpServers:[],wsServers:[]}},posts=0;
+    const request=async(_path,options)=>{if(options.method==='POST'){posts++;config=structuredClone(options.body);if(concurrent)config.networks.httpServers[0].port=19401;return{success:true,saved:true,applied:false,online:true};}return{config:structuredClone(config)};};
+    await assert.rejects(prepareSnowConnection({request,credential,accountId:'12345678',httpPort:19201,wsPort:19202,token:credential,verifySaved:true}),isPrivateError);
+    assert.equal(posts,concurrent?1:2);assert.deepEqual(config.networks.httpServers,concurrent?config.networks.httpServers:[]);
+  }
+});
+test('a lying successful save cannot be accepted as configured',async()=>{
+  let posts=0;const request=async(_path,options)=>{if(options.method==='POST'){posts++;return{success:true,saved:true,applied:true,online:true};}return{config:{networks:{httpServers:[],wsServers:[]}}};};
+  await assert.rejects(prepareSnowConnection({request,credential,accountId:'12345678',httpPort:19201,wsPort:19202,token:credential,verifySaved:true}),isPrivateError);assert.equal(posts,1);
+});
+test('SnowLuma 2.2 canonical defaults support reuse, readback and lossless rollback',async()=>{
+  const {mergeProtocolConnection}=await import('../src/protocols/adapters.js');
+  const canonical=c=>{const copy=structuredClone(c);for(const row of copy.networks?.httpServers||[]){delete row.enabled;row.enableWebSocket??=false;}for(const row of copy.networks?.wsServers||[])delete row.enabled;return copy;};
+  let config=canonical(mergeProtocolConnection({},{provider:'snowluma',httpPort:19201,wsPort:19202,token:credential})),posts=0;
+  const request=async(_path,options)=>{if(options.method==='POST'){posts++;config=canonical(options.body);return{success:true,saved:true,applied:true,online:true};}return{config:structuredClone(config)};};
+  const reused=await prepareSnowConnection({request,credential,accountId:'12345678',httpPort:19301,wsPort:19302,token:'unused',reuseExisting:true,verifySaved:true});assert.equal(reused.httpPort,19201);assert.equal(posts,0);
+  const changed=await prepareSnowConnection({request,credential,accountId:'12345678',httpPort:19301,wsPort:19302,token:credential,verifySaved:true});assert.equal(snowConnection(config).httpPort,19301);await changed.rollback();assert.equal(snowConnection(config).httpPort,19201);assert.equal(posts,2);
 });
 
 for (const { name, run } of cases) {

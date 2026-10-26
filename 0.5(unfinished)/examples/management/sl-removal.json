@@ -1,0 +1,502 @@
+{
+  "format": "qqa-management-v1",
+  "rule": {
+    "id": "base-23",
+    "name": "#sl → 基础节点组合",
+    "enabled": false,
+    "groups": [],
+    "cooldownSeconds": 0,
+    "nodes": [
+      {
+        "id": "base-1",
+        "type": "message",
+        "config": {},
+        "next": "base-5"
+      },
+      {
+        "id": "base-2",
+        "type": "message_text",
+        "config": {},
+        "bindings": {
+          "message": {
+            "nodeId": "base-1",
+            "port": "message"
+          }
+        }
+      },
+      {
+        "id": "base-3",
+        "type": "compare",
+        "config": {
+          "operator": "eq"
+        },
+        "bindings": {
+          "a": {
+            "nodeId": "base-2",
+            "port": "text"
+          }
+        },
+        "values": {
+          "b": "#sl"
+        }
+      },
+      {
+        "id": "base-4",
+        "type": "boolean_logic",
+        "config": {
+          "operator": "and"
+        },
+        "bindings": {
+          "a": {
+            "nodeId": "base-3",
+            "port": "result"
+          },
+          "b": {
+            "nodeId": "base-2",
+            "port": "only_text"
+          }
+        }
+      },
+      {
+        "id": "base-5",
+        "type": "branch_value",
+        "config": {
+          "condition": false
+        },
+        "next": "base-6",
+        "otherwise": "$end",
+        "bindings": {
+          "condition": {
+            "nodeId": "base-4",
+            "port": "result"
+          }
+        }
+      },
+      {
+        "id": "base-6",
+        "type": "member_info",
+        "config": {},
+        "next": "base-8"
+      },
+      {
+        "id": "base-7",
+        "type": "compare",
+        "config": {
+          "operator": "eq"
+        },
+        "bindings": {
+          "a": {
+            "nodeId": "base-6",
+            "port": "role"
+          }
+        },
+        "values": {
+          "b": "member"
+        }
+      },
+      {
+        "id": "base-8",
+        "type": "branch_value",
+        "config": {
+          "condition": false
+        },
+        "next": "base-9",
+        "otherwise": "$end",
+        "bindings": {
+          "condition": {
+            "nodeId": "base-7",
+            "port": "result"
+          }
+        }
+      },
+      {
+        "id": "base-9",
+        "type": "kick",
+        "config": {},
+        "next": "base-10"
+      },
+      {
+        "id": "base-10",
+        "type": "branch_value",
+        "config": {
+          "condition": false
+        },
+        "next": "base-13",
+        "otherwise": "$end",
+        "bindings": {
+          "condition": {
+            "nodeId": "base-9",
+            "port": "success"
+          }
+        }
+      },
+      {
+        "id": "base-11",
+        "type": "time_format",
+        "config": {
+          "format": "date"
+        },
+        "bindings": {
+          "time": {
+            "nodeId": "base-9",
+            "port": "completed_at"
+          }
+        }
+      },
+      {
+        "id": "base-12",
+        "type": "format_text",
+        "config": {
+          "template": "{{a}}/{{b}}/{{c}}"
+        },
+        "bindings": {
+          "a": {
+            "nodeId": "base-1",
+            "port": "group_id"
+          },
+          "b": {
+            "nodeId": "base-11",
+            "port": "text"
+          }
+        },
+        "values": {
+          "c": "#sl"
+        }
+      },
+      {
+        "id": "base-13",
+        "type": "state_add",
+        "config": {
+          "key": "",
+          "scope": "rule",
+          "ttl_seconds": 172800,
+          "amount": 1,
+          "initial": 0
+        },
+        "next": "base-14",
+        "bindings": {
+          "key": {
+            "nodeId": "base-12",
+            "port": "text"
+          }
+        }
+      },
+      {
+        "id": "base-14",
+        "type": "event_source",
+        "config": {
+          "event_type": "message",
+          "replay_seconds": 60
+        },
+        "next": "base-17"
+      },
+      {
+        "id": "base-15",
+        "type": "time_offset",
+        "config": {
+          "seconds": 5
+        },
+        "bindings": {
+          "time": {
+            "nodeId": "base-1",
+            "port": "time"
+          }
+        }
+      },
+      {
+        "id": "base-16",
+        "type": "stream_window",
+        "config": {},
+        "bindings": {
+          "events": {
+            "nodeId": "base-14",
+            "port": "events"
+          },
+          "start": {
+            "nodeId": "base-1",
+            "port": "time"
+          },
+          "end": {
+            "nodeId": "base-15",
+            "port": "time"
+          }
+        }
+      },
+      {
+        "id": "base-17",
+        "type": "for_each",
+        "config": {
+          "on_error": "continue",
+          "max_items": 2000
+        },
+        "each": "base-19",
+        "next": "base-22",
+        "bindings": {
+          "items": {
+            "nodeId": "base-16",
+            "port": "items"
+          }
+        }
+      },
+      {
+        "id": "base-18",
+        "type": "data_field",
+        "config": {
+          "path": "message_id"
+        },
+        "scope": "base-17",
+        "bindings": {
+          "object": {
+            "nodeId": "base-17",
+            "port": "item"
+          }
+        }
+      },
+      {
+        "id": "base-19",
+        "type": "recall",
+        "config": {},
+        "scope": "base-17",
+        "next": "$end",
+        "bindings": {
+          "message_id": {
+            "nodeId": "base-18",
+            "port": "value"
+          }
+        }
+      },
+      {
+        "id": "base-20",
+        "type": "time_format",
+        "config": {
+          "format": "datetime"
+        },
+        "bindings": {
+          "time": {
+            "nodeId": "base-9",
+            "port": "completed_at"
+          }
+        }
+      },
+      {
+        "id": "base-21",
+        "type": "format_text",
+        "config": {
+          "template": "{{a}}（qq：{{b}}）于{{c}}被移出群聊！此人为今日第{{d}}个因发送#sl被移出群聊的成员。"
+        },
+        "bindings": {
+          "a": {
+            "nodeId": "base-6",
+            "port": "nickname"
+          },
+          "b": {
+            "nodeId": "base-1",
+            "port": "user_id"
+          },
+          "c": {
+            "nodeId": "base-20",
+            "port": "text"
+          },
+          "d": {
+            "nodeId": "base-13",
+            "port": "value"
+          }
+        }
+      },
+      {
+        "id": "base-22",
+        "type": "send_text",
+        "config": {
+          "text": ""
+        },
+        "next": "$end",
+        "bindings": {
+          "text": {
+            "nodeId": "base-21",
+            "port": "text"
+          }
+        }
+      }
+    ],
+    "layout": {
+      "version": 1,
+      "positions": {},
+      "visiblePorts": {
+        "base-1": {
+          "inputs": [],
+          "outputs": [
+            "message",
+            "group_id",
+            "time",
+            "user_id"
+          ]
+        },
+        "base-2": {
+          "inputs": [
+            "message"
+          ],
+          "outputs": [
+            "text",
+            "only_text"
+          ]
+        },
+        "base-3": {
+          "inputs": [
+            "a",
+            "b"
+          ],
+          "outputs": [
+            "result"
+          ]
+        },
+        "base-4": {
+          "inputs": [
+            "a",
+            "b"
+          ],
+          "outputs": [
+            "result"
+          ]
+        },
+        "base-5": {
+          "inputs": [
+            "condition"
+          ],
+          "outputs": []
+        },
+        "base-6": {
+          "inputs": [],
+          "outputs": [
+            "role",
+            "nickname"
+          ]
+        },
+        "base-7": {
+          "inputs": [
+            "a",
+            "b"
+          ],
+          "outputs": [
+            "result"
+          ]
+        },
+        "base-8": {
+          "inputs": [
+            "condition"
+          ],
+          "outputs": []
+        },
+        "base-9": {
+          "inputs": [],
+          "outputs": [
+            "success",
+            "completed_at"
+          ]
+        },
+        "base-10": {
+          "inputs": [
+            "condition"
+          ],
+          "outputs": []
+        },
+        "base-11": {
+          "inputs": [
+            "time"
+          ],
+          "outputs": [
+            "text"
+          ]
+        },
+        "base-12": {
+          "inputs": [
+            "a",
+            "b"
+          ],
+          "outputs": [
+            "text"
+          ]
+        },
+        "base-13": {
+          "inputs": [
+            "key"
+          ],
+          "outputs": [
+            "value"
+          ]
+        },
+        "base-14": {
+          "inputs": [],
+          "outputs": [
+            "events"
+          ]
+        },
+        "base-15": {
+          "inputs": [
+            "time",
+            "seconds"
+          ],
+          "outputs": [
+            "time"
+          ]
+        },
+        "base-16": {
+          "inputs": [
+            "events",
+            "start",
+            "end"
+          ],
+          "outputs": [
+            "items"
+          ]
+        },
+        "base-17": {
+          "inputs": [
+            "items"
+          ],
+          "outputs": [
+            "item"
+          ]
+        },
+        "base-18": {
+          "inputs": [
+            "object"
+          ],
+          "outputs": [
+            "value"
+          ]
+        },
+        "base-19": {
+          "inputs": [
+            "message_id"
+          ],
+          "outputs": []
+        },
+        "base-20": {
+          "inputs": [
+            "time"
+          ],
+          "outputs": [
+            "text"
+          ]
+        },
+        "base-21": {
+          "inputs": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "outputs": [
+            "text"
+          ]
+        },
+        "base-22": {
+          "inputs": [
+            "text"
+          ],
+          "outputs": []
+        }
+      }
+    }
+  }
+}

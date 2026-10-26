@@ -11,8 +11,8 @@ const dir = (name) => { const value = path.join(root, name); fs.mkdirSync(value,
 const deferred = () => { let resolve; let reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 const fakeKernel = (dataDir, { price = Promise.resolve({ ok: true }), blocklist = Promise.resolve({ ok: true, ids: [] }), connect = Promise.resolve() } = {}) => {
-  const calls = { transportStop: 0, close: 0 };
-  const transport = { id: 'fixture', start: () => connect, actions: {}, toPlatformSegments: (x) => x,
+  const calls = { transportStart:0,transportStop: 0, close: 0 };
+  const transport = { id: 'fixture', start: () => {calls.transportStart++;return connect;}, actions: {}, toPlatformSegments: (x) => x,
     stop: async () => { calls.transportStop++; },
   };
   const kernel = createKernel({
@@ -69,7 +69,10 @@ try {
     const { kernel, calls } = fakeKernel(dataDir, { connect: connect.promise });
     const start = kernel.start();
     const failed = assert.rejects(start, /测试启动失败/);
-    await new Promise(setImmediate);
+    // Startup includes asynchronous account-registry reads; one immediate turn
+    // is not evidence that the injected transport has received the promise.
+    for(let i=0;i<1000&&!calls.transportStart;i++)await new Promise(resolve=>setTimeout(resolve,5));
+    assert.equal(calls.transportStart,1);
     connect.reject(new Error('测试启动失败'));
     await failed;
     assert.equal(kernel.scheduler.count(), 0);

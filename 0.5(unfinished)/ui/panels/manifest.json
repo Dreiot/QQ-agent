@@ -135,6 +135,59 @@
       ]
     },
     {
+      "id": "rules",
+      "title": "规则",
+      "description": "事件、条件与自动操作",
+      "kind": "bundled",
+      "permissions": [],
+      "viewState": {
+        "keys": [
+          "editor"
+        ],
+        "bootScripts": [
+          "panel.js"
+        ]
+      },
+      "api": [
+        {
+          "method": "POST",
+          "path": "/api/management"
+        },
+        {
+          "method": "GET",
+          "path": "/api/management"
+        },
+        {
+          "method": "GET",
+          "path": "/api/management/groups"
+        },
+        {
+          "method": "POST",
+          "path": "/api/management/simulate"
+        },
+        {
+          "method": "POST",
+          "path": "/api/management/validate"
+        },
+        {
+          "method": "GET",
+          "path": "/api/management/runs"
+        },
+        {
+          "method": "GET",
+          "path": "/api/management/runs/:id"
+        },
+        {
+          "method": "GET",
+          "path": "/api/onebot/groups"
+        },
+        {
+          "method": "GET",
+          "path": "/api/onebot/friends"
+        }
+      ]
+    },
+    {
       "id": "memory",
       "title": "记忆",
       "kind": "bundled",
@@ -724,6 +777,22 @@
           "path": "/api/uikit/background"
         },
         {
+          "method": "POST",
+          "path": "/api/uikit/background/uploads"
+        },
+        {
+          "method": "POST",
+          "path": "/api/uikit/background/uploads/:id/chunk"
+        },
+        {
+          "method": "POST",
+          "path": "/api/uikit/background/uploads/:id/complete"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/uikit/background/uploads/:id"
+        },
+        {
           "method": "GET",
           "path": "/api/uikit/background/:id"
         },
@@ -734,6 +803,14 @@
         {
           "method": "POST",
           "path": "/api/providers/test-chat"
+        },
+        {
+          "method": "GET",
+          "path": "/api/ui/fonts"
+        },
+        {
+          "method": "GET",
+          "path": "/api/ui/fonts/refresh"
         }
       ]
     },

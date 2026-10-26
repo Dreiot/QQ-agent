@@ -200,7 +200,7 @@ try{
   const initialSettingsReads=settingsReads;
   await updateBotName('QA-95-NOTIFICATION-FIRST');
   assert.equal(settingsReads,initialSettingsReads+1,'a real config POST must refresh settings once');
-  await settings.getByRole('button',{name:'选择图片',exact:true}).focus();
+  await settings.getByRole('button',{name:'选择图片或视频',exact:true}).focus();
   const rejectedUpload=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/uikit/background'&&response.request().method()==='POST');
   await settings.locator('#section-uikit input[type=file]').setInputFiles({name:'qa95-invalid.png',mimeType:'image/png',buffer:Buffer.from('QA95 inert invalid image bytes')});
   assert.equal((await rejectedUpload).status(),400);

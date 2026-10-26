@@ -117,7 +117,7 @@ textarea { resize: vertical; min-height: 80px; line-height: 1.7; }
 fieldset { min-width: 0; border: 1px solid var(--line); padding: var(--sp-4); }
 legend { padding: 0 var(--sp-2); color: var(--muted); font-size: 12px; }
 h1, h2, h3, h4, p { overflow-wrap: anywhere; }
-h1, h2, h3, h4 { font-weight: var(--heading-weight); line-height: 1.35; }
+h1, h2, h3, h4, h5, h6 { font-family:var(--font-heading,var(--font-sans)); font-weight: var(--heading-weight); line-height: 1.35; }
 h2 { margin: 5px 0 var(--sp-2); font-size: clamp(calc(23px * var(--heading-scale)), calc(2.3vw * var(--heading-scale)), calc(30px * var(--heading-scale))); letter-spacing: -.04em; }
 h3 { margin: 0 0 var(--sp-3); font-size: calc(16px * var(--heading-scale)); }
 h4 { margin: var(--sp-3) 0; font-size: calc(13px * var(--heading-scale)); }

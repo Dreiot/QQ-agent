@@ -5,7 +5,7 @@ import {modelUiFixture} from './model-ui-fixture.mjs';
 import {readPanelTarget} from '../ui/shell/account-navigation.js';
 
 const child='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',prefix='/accounts/'+child;
-const targets=['settings','chats','memory','usage'];
+const targets=['settings','chats','rules','memory','usage'];
 const definitions=targets.map(id=>({id}));
 assert.equal(readPanelTarget('?panel=settings&panel=chats',definitions),null,'ambiguous panel requests must fall back');
 assert.equal(readPanelTarget('?panel=..%2Fsettings',definitions),null,'paths cannot become panel IDs');
@@ -124,5 +124,5 @@ try{
   assert.equal(qa.writes.filter(write=>/\/chats\//.test(write.path)).length,0);
   await page.screenshot({path:path.join(evidence,'child-settings.png'),fullPage:true});
   fs.writeFileSync(path.join(evidence,'result.json'),JSON.stringify({checks,observations,requests,rejectedSaves,errors:qa.errors,outbound:qa.outbound()},null,2));
-  console.log('✓ account navigation browser: four panels, both account directions, reload, scoped frames, keyboard and management entry, missing-panel fallback, isolated chat selection and failed-save protection');
+  console.log('✓ account navigation browser: five panels including rules, both account directions, reload, scoped frames, keyboard and management entry, missing-panel fallback, isolated chat selection and failed-save protection');
 }catch(error){await page.screenshot({path:path.join(evidence,'failure.png'),fullPage:true});throw error;}finally{await qa.close();}

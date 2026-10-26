@@ -3,11 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {modelUiFixture} from './model-ui-fixture.mjs';
 import {settingsSection,settingsEditor,settingsPickModel,openSettingsFold} from './settings-navigation.mjs';
-const expected=['onebot','models','access','persona','chat','memory','search','tools','appearance','security','desktop'];
+const expected=['onebot','models','access','persona','chat','management','memory','search','tools','appearance','security','desktop'];
 const config={allow:{groups:['10001'],private:[]},persona:{roleText:'结构测试角色'},memory:{useChatModel:true,consolidateEnabled:false,consolidateMinIntervalMs:3600000},webSearch:{enabled:false,bocha:{apiKey:'synthetic-preconfigured-source'}},proactive:{enabled:false,probability:.25}};
-// Two independently requested brand controls were added after the original
-// inventory snapshot. Keep that historical snapshot and allow only those additions.
-const baseline=[...JSON.parse(fs.readFileSync(new URL('./settings-structure-fields.json',import.meta.url))).paths,'ui.uikit.dark.brandIconSize','ui.uikit.dark.brandMotionSpeed'].sort();
+// Keep the original inventory plus the explicitly added brand and local font controls.
+const baseline=[...JSON.parse(fs.readFileSync(new URL('./settings-structure-fields.json',import.meta.url))).paths,'ui.uikit.dark.brandIconSize','ui.uikit.dark.brandMotionSpeed',...['bodyFont','titleFont','codeFont'].map(key=>'ui.uikit.dark.'+key)].sort();
 const fields=frame=>frame.locator('[data-config-path]').evaluateAll(nodes=>nodes.map(n=>n.dataset.configPath).sort());
 const until=async(read,test,label)=>{for(let i=0;i<200;i++){if(test(await read()))return;await new Promise(r=>setTimeout(r,25));}throw Error(label);};
 const businessWrites=f=>f.writes.filter(row=>!row.path.startsWith('/api/config/lifecycle')&&row.path!=='/api/console/bootstrap');
@@ -16,7 +15,7 @@ try{
  const {frame,page}=f;assert.deepEqual(await frame.locator('#settings-sidebar a').evaluateAll(nodes=>nodes.map(n=>n.dataset.target)),expected);assert.deepEqual(await fields(frame),baseline);
  const initial=businessWrites(f).length;
  for(const section of expected){await settingsSection(frame,section);assert.equal(await frame.locator('#fields > .settings-section:visible').count(),1);}
- assert.equal(businessWrites(f).length,initial);console.log('✓ 249: eleven sections preserve every original field exactly once; navigation writes nothing');
+ assert.equal(businessWrites(f).length,initial);console.log('✓ 249: twelve sections preserve every original field exactly once; navigation writes nothing');
  await settingsSection(frame,'models');assert.equal(await frame.locator('.model-config-layout').isVisible(),true);assert.equal(await frame.locator('#base-url').isVisible(),false);assert.equal(await frame.locator('#provider-list').isVisible(),false);
  await settingsPickModel(frame,'main','a','alpha/existing');await until(()=>f.disk().api.model,x=>x==='alpha/existing','main model autosave');assert.equal(f.disk().providers[0].models[0].vision,true);
  const manager=await settingsEditor(frame,'model-manager');await manager.locator('[data-settings-open=provider-add]').click();const add=frame.locator('dialog[data-settings-editor=provider-add]');await add.waitFor();assert.equal(await frame.locator('dialog[open]').count(),2);await add.press('Escape');await add.waitFor({state:'detached'});assert.equal(await manager.isVisible(),true);

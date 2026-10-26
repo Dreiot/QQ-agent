@@ -29,7 +29,7 @@ function assertPublic(value) {
     assert.equal(text.includes(secret), false, `public state leaked a fixture secret`);
   }
 }
-function makeHarness({ provider = 'napcat', external = false, onlineAccount = '', nativeGate = null, verifyResult = true, onVerifiedAccount = null, preparedNap = false } = {}) {
+function makeHarness({ provider = 'napcat', external = false, onlineAccount = '', nativeGate = null, verifyResult = true, onVerifiedAccount = null, preparedNap = false, canonicalSnow = false, getAccounts = null } = {}) {
   let settings = { onebot: { httpUrl: 'http://127.0.0.1:19101', wsUrl: 'ws://127.0.0.1:19102', accessToken: 'fixture-onebot-token', httpAccessToken: 'fixture-onebot-token' } };
   const changes = new Set(), listeners = new Map(), events = [], calls = [], commits = [], written = [], verifications = [], streamControllers = [];
   let managed = external ? null : { id: 'fixture-package', instanceId: 'fixture-instance', provider, source: 'managed', root,
@@ -86,6 +86,7 @@ function makeHarness({ provider = 'napcat', external = false, onlineAccount = ''
       else if (url.pathname === '/api/processes') response = json({ list: structuredClone(processes) });
       else if (url.pathname === `/api/config/${account}` && options.method === 'POST') {
         written.push(body); nativeConfig = structuredClone(body);
+        if(canonicalSnow){for(const row of nativeConfig.networks.httpServers){delete row.enabled;row.enableWebSocket??=false;}for(const row of nativeConfig.networks.wsServers)delete row.enabled;}
         if (injectAccountChange) processes = processes.map(item => ({ ...item, account: { uin: otherAccount } }));
         const online = processes.some(item => item.status === 'online');
         response = json({ success: configSaved, saved: configSaved, applied: online && configSaved, online });
@@ -98,7 +99,7 @@ function makeHarness({ provider = 'napcat', external = false, onlineAccount = ''
     if (afterNative) await afterNative(url, options, body);
     return response;
   };
-  const login = createProtocolLogin({ config, localProtocols, bus, fetchImpl, allocatePort: async () => port++, onVerifiedAccount, verifyConnection: async target => {
+  const login = createProtocolLogin({ config, localProtocols, bus, fetchImpl, allocatePort: async () => port++, onVerifiedAccount, getAccounts, verifyConnection: async target => {
     verifications.push(target); return verifyResult;
   }, qrImageFor: async text => {
     assert.ok(text.startsWith(rawQr)); return qrPng;
@@ -348,7 +349,7 @@ test('failed workspace registration cannot prematurely replace the primary conne
   const h = makeHarness({ provider: 'snowluma', onVerifiedAccount: async () => { attempts++; throw Error('fixture-upstream-secret'); } });
   try { const initial = await h.open(); await h.login.connect({ sessionId: initial.sessionId, password }); const primary = structuredClone(h.config.get());
     const selected = await h.login.inject({ sessionId: initial.sessionId, pid: 101 });
-    assert.ok(attempts > 0); assert.equal(h.commits.length, 0); assert.deepEqual(h.config.get(), primary); assert.equal(selected.stage, 'initializing');
+    assert.equal(attempts, 1); assert.equal(h.commits.length, 0); assert.deepEqual(h.config.get(), primary); assert.equal(selected.stage, 'error');
     assert.equal(selected.workspaceId, undefined); assert.equal(selected.account, null); assertPublic(selected);
   } finally { h.login.close(); }
 });
@@ -505,6 +506,45 @@ test('service close blocks future opens and disposes configuration/runtime subsc
   const h = makeHarness(); await h.open(); h.login.close();
   await assert.rejects(h.open(), error => error.status === 409);
   h.config.update({ onebot: {} }); h.bus.emit('local-protocols', {});
+});
+
+test('Snow repeating a verified account connection keeps its native ports and token stable', async()=>{
+  const h=makeHarness({provider:'snowluma',canonicalSnow:true});try{
+    const initial=await h.open();await h.login.connect({sessionId:initial.sessionId,password});await h.login.inject({sessionId:initial.sessionId,pid:101});
+    const native=structuredClone(h.nativeConfig),connection=structuredClone(h.config.get().onebot),writes=h.written.length;
+    await h.login.inject({sessionId:initial.sessionId,pid:101});assert.deepEqual(h.nativeConfig,native,'reconnect must not replace existing listeners');assert.deepEqual(h.config.get().onebot,connection);assert.equal(h.written.length,writes,'unchanged native config needs no rewrite');
+  }finally{h.login.close();}
+});
+test('Snow native online state alone never claims a verified QQA connection',async()=>{
+  const h=makeHarness({provider:'snowluma',verifyResult:false});h.managed.account=account;h.processes=[{pid:101,uin:account,account:{uin:account,nickname:'在线但未核验'},injected:true,connected:true,loggedIn:true,status:'online'}];try{
+    const initial=await h.open();const state=await h.login.connect({sessionId:initial.sessionId,password});assert.notEqual(state.stage,'connected');assert.equal(state.account,null);assert.equal(h.commits.length,0);
+  }finally{h.login.close();}
+});
+test('Snow workspace failure is explicit and does not silently retry registration',async()=>{
+  let attempts=0;const h=makeHarness({provider:'snowluma',onVerifiedAccount:async()=>{attempts++;throw Object.assign(Error('fixture-private-details'),{status:503});}});try{
+    const initial=await h.open();await h.login.connect({sessionId:initial.sessionId,password});const state=await h.login.inject({sessionId:initial.sessionId,pid:101});assert.equal(state.stage,'error');assert.ok(state.error);assertPublic(state);await h.login.get({sessionId:initial.sessionId});assert.equal(attempts,1,'registration must wait for another explicit user attempt');
+  }finally{h.login.close();}
+});
+
+test('Snow configuration failure remains visible after subsequent metadata refresh',async()=>{
+ const h=makeHarness({provider:'snowluma'});h.configSaved=false;try{const initial=await h.open();await h.login.connect({sessionId:initial.sessionId,password});await assert.rejects(h.login.inject({sessionId:initial.sessionId,pid:101}));const state=await h.login.get({sessionId:initial.sessionId});assert.equal(state.stage,'error');assert.ok(state.error);assert.equal(h.commits.length,0);assertPublic(state);}finally{h.login.close();}
+});
+test('closing and reopening an unfinished Snow connection never hands off the abandoned target',async()=>{
+ let attempts=0;const h=makeHarness({provider:'snowluma',onVerifiedAccount:async()=>{attempts++;return{workspaceId:'primary'};}});h.loginInfoAccount=otherAccount;
+ try{const initial=await h.open();await h.login.connect({sessionId:initial.sessionId,password});await h.login.inject({sessionId:initial.sessionId,pid:101});h.login.closeView({sessionId:initial.sessionId});h.loginInfoAccount=account;const fresh=await h.open();await h.login.get({sessionId:fresh.sessionId});assert.equal(attempts,0);assert.equal(h.commits.length,0);}finally{h.login.close();}
+});
+
+test('live workspace metadata controls connected state without self-triggering WS probes',async()=>{
+ let connected=true;const h=makeHarness({provider:'snowluma',getAccounts:async()=>({accounts:[{id:'primary',accountId:account,wanted:true,connected}]})});try{
+  const initial=await h.open();await h.login.connect({sessionId:initial.sessionId,password});const selected=await h.login.inject({sessionId:initial.sessionId,pid:101});assert.equal(selected.stage,'connected');const count=h.verifications.length;
+  for(let i=0;i<5;i++){h.emitStream({resource:'connections'});assert.equal((await h.login.get({sessionId:initial.sessionId})).stage,'connected');}assert.equal(h.verifications.length,count,'connections events must never open another WS probe');
+  connected=false;const offline=await h.login.get({sessionId:initial.sessionId});assert.equal(offline.stage,'waiting');assert.equal(offline.account,null);assert.equal(h.verifications.length,count);
+ }finally{h.login.close();}
+});
+
+test('a concurrent status GET cannot register the same pending account twice',async()=>{
+ let attempts=0,release,entered;const started=new Promise(resolve=>{entered=resolve;});const h=makeHarness({provider:'snowluma',onVerifiedAccount:async()=>{attempts++;entered();await new Promise(resolve=>{release=resolve;});return{workspaceId:'primary'};}});
+ try{const initial=await h.open();await h.login.connect({sessionId:initial.sessionId,password});const injection=h.login.inject({sessionId:initial.sessionId,pid:101});await started;await h.login.get({sessionId:initial.sessionId});assert.equal(attempts,1);release();assert.equal((await injection).stage,'connected');assert.equal(attempts,1);}finally{release?.();h.login.close();}
 });
 
 let passed = 0;

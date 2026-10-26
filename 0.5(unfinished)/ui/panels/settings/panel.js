@@ -1,4 +1,4 @@
-import { request, onShellEvent, onLeave, onBeforeLeave, getViewState, onViewStateSnapshot, consoleUpdate, applyHostTheme, openConsoleTokenManager, openLocalProtocolPage, settingsSaveAvailable, settingsSaveState, saveSettings, contentReady } from '/panels/panel-client.js';
+import { request, onShellEvent, onLeave, onBeforeLeave, getViewState, onViewStateSnapshot, consoleUpdate, applyHostTheme, openVisualEditor, openConsoleTokenManager, openLocalProtocolPage, settingsSaveAvailable, settingsSaveState, saveSettings, contentReady } from '/panels/panel-client.js';
 import {createLiveRefresh} from '../live-refresh.js';
 import {currentAccountScope} from '../account-scope.js';
 import { $, button, destructiveButton, bindDestructiveAction, clear, confirmAction, row, text } from '../ui.js';
@@ -7,6 +7,8 @@ import {createIcon} from '../icons.js';
 import {renderAppearanceControls} from './appearance-controls.js';
 import { FormState, getPath } from './form-state.js';
 import { createBackgroundEditor } from './bg-editor.js';
+import {uploadBackgroundFile} from './background-upload.js';
+import {isVideoBackground} from '../background-media.js';
 import { editGroupResponse, editFallbacks, editModelPrices, editSearchProvider } from './spec-editors.js';
 import { renderComponentPreview } from './component-preview.js';
 import { createThemePreviewQueue } from '../theme-preview.js';
@@ -35,6 +37,7 @@ import {searchSourcePresets} from './search-sources.js';
 import {createAutoSave,flushAutoSaves,hasAutoSaves,mountSaveFeedback,saveFeedback} from './auto-save.js';
 import {mountSwitchCards} from './switch-cards.js';
 import {organizeAppearance} from './appearance-layout.js';
+import {renderAppearanceFeels} from './appearance-feels.js';
 import {mountChoiceCards} from './choice-cards.js';
 import {installDisposableDialog} from '../dialog-lifecycle.js';
 import {createLocalProtocols} from './local-protocols.js';
@@ -86,9 +89,11 @@ let loading = false;
 let disposed = false;
 let renderedView = null;
 let backgroundEditor = null;
+let backgroundViewport={width:window.innerWidth,height:window.innerHeight};
 let backgroundUploadVersion = 0;
 let backgroundUploadMode = null;
 let backgroundUploadImage = null;
+let backgroundUploadFeedback = null;
 let backgroundUploadLeaving = false;
 let refreshBackgroundKit = null;
 let providers = [];
@@ -198,7 +203,7 @@ function safeJson(value, field) {
 }
 function queue(field, value, immediate = false, replace = false) {
   if (resetting || resetPreparing || resetAccepted) return;
-  if(field.startsWith('ui.uikit')&&!previousAppearance)previousAppearance=migrateUikit(form.value('ui.uikit'));
+  if(field.startsWith('ui.uikit')&&!previousAppearance)previousAppearance=structuredClone(migrateUikit(form.value('ui.uikit')));
   if(field.startsWith('ui.uikit')){const undo=document.querySelector('[aria-label="撤销本次外观调整"]');if(undo)undo.disabled=false;}
   form.set(field, value, { replace });
   if(field.startsWith('ui.uikit'))refreshPalette();
@@ -340,7 +345,7 @@ function buildSectionNav() {
       const bar = document.createElement('span'); bar.className = 'channel-bar';
       mark.append(led, bar);
       const body = document.createElement('span'); body.className = 'channel-text';
-      const name = document.createElement('span'); name.className = 'channel-title';name.append(createIcon(({onebot:'link',models:'model',access:'chats',persona:'community',chat:'chats',memory:'memory',search:'search',tools:'skills',appearance:'contrast',security:'shield',desktop:'panel'})[id]||'panel',{size:18}),document.createTextNode(entry.title));
+      const name = document.createElement('span'); name.className = 'channel-title';name.append(createIcon(({onebot:'link',models:'model',access:'chats',persona:'community',chat:'chats',management:'shield',memory:'memory',search:'search',tools:'skills',appearance:'contrast',security:'shield',desktop:'panel'})[id]||'panel',{size:18}),document.createTextNode(entry.title));
       const desc = document.createElement('span'); desc.className = 'channel-desc';
       text(desc, entry.description || '');
       body.append(name, desc);
@@ -754,6 +759,7 @@ function renderSearchProviders() {
   }
 }
 function render() {
+  const savedAppearanceFolds=new Map([...document.querySelectorAll('details[data-appearance-group]')].map(group=>[group.dataset.appearanceGroup,group.open]));
   const activityDraft=settingsStructure?.activityDraft;
   costView?.dispose();costView=null;
   disposePriceTable();disposePriceTable=()=>{};
@@ -1048,7 +1054,8 @@ function render() {
     appearanceChoices.splice(0).forEach(dispose=>dispose());
     backgroundEditor?.dispose();
     backgroundEditor = null;
-    const openAppearanceGroups=new Set([...kit.fields.querySelectorAll('details[open]')].map(el=>el.dataset.appearanceGroup));
+    const currentAppearanceFolds=[...kit.fields.querySelectorAll('details[data-appearance-group]')];
+    const openAppearanceGroups=currentAppearanceFolds.length?new Set(currentAppearanceFolds.filter(group=>group.open).map(group=>group.dataset.appearanceGroup)):new Set([...savedAppearanceFolds].filter(([,isOpen])=>isOpen).map(([key])=>key));
     kit.fields.replaceChildren();
     const mode = currentMode();
     // A redraw after rename/palette/config refresh keeps the same logical upload.
@@ -1056,7 +1063,7 @@ function render() {
     const editorSlot = slotPrefix();
     const image = form.value(`${editorSlot}.bgImage`) ?? '';
     if (backgroundUploadMode !== mode || backgroundUploadImage !== image) {
-      ++backgroundUploadVersion; backgroundUploadMode = mode; backgroundUploadImage = image;
+      ++backgroundUploadVersion; backgroundUploadMode = mode; backgroundUploadImage = image;backgroundUploadFeedback=null;
     }
     const effective = currentScheme();
     const custom = migrateUikit(form.value('ui.uikit')).custom;
@@ -1070,7 +1077,7 @@ function render() {
     text(headTitle, `正在编辑：${slotLabel}`);
     const headRow = document.createElement('div'); headRow.className = 'actions';
     const nameInput = localInput(headRow, '方案名称', 'uikit-scheme-name'); nameInput.value = `我的方案 ${Object.keys(custom).length + 1}`;
-    const createTheme=button('主题', () => {
+    const createTheme=button('另存主题', () => {
       const name = String(nameInput.value || '').trim() || `我的方案 ${Object.keys(custom).length + 1}`;
       const { store, id } = saveCustom(form.value('ui.uikit'), name, currentScheme());
       replaceSchemeStore(store);
@@ -1153,49 +1160,51 @@ function render() {
       wrap.append(title, input); kit.fields.append(wrap);
     }
 
-    // ⑤ 背景图：先上传/编辑，确认后再应用。
-    //编辑能力（16:9 范围选定 + 旋转）由 bg-editor.js 提供，所见即所得。
+    // ⑤ 背景图：上传后立即预览并自动保存。
+    // Preview/crop use the host viewport, including while its window resizes.
     const bgWrap = document.createElement('div'); bgWrap.className = 'setting-field full';
-    const bgTitle = document.createElement('span'); bgTitle.className = 'field-title'; text(bgTitle, '背景图');
+    const bgTitle = document.createElement('span'); bgTitle.className = 'field-title'; text(bgTitle, '背景');
     const bgNote = document.createElement('p'); bgNote.className = 'field-hint';
-    bgNote.textContent = '上传后可拖动选框选范围（16:9）、拖旋钮旋转，实时预览。';
+    bgNote.textContent = '图片、动图或 MP4 / WebM 视频，保留原文件质量，最大 256MB。视频静音循环播放。';
     // 文件选择器：由编辑器"选择图片"按钮触发
     const fileInput = document.createElement('input');
-    fileInput.type = 'file'; fileInput.accept = 'image/png,image/jpeg,image/gif,image/webp';
+    fileInput.type = 'file'; fileInput.accept = 'image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm';
     fileInput.style.display = 'none';
     let pickerVersion = null;
     const uploadScopeLive = () => currentMode() === mode && !disposed && !backgroundUploadLeaving
       && !resetting && !resetPreparing && !resetAccepted;
+    const showUploadStatus=(message,failed=false)=>{
+      if(!uploadScopeLive())return;
+      backgroundUploadFeedback={message,failed};backgroundEditor?.setUploadStatus(message,failed);
+    };
     fileInput.addEventListener('change', async () => {
       const file = fileInput.files?.[0];
       if (!file || !uploadScopeLive() || (!currentEditor() && pickerVersion !== backgroundUploadVersion)) return;
       const uploadVersion = ++backgroundUploadVersion;
       const uploadCurrent = () => uploadVersion === backgroundUploadVersion && uploadScopeLive();
-      if (file.size > 8 * 1024 * 1024) { report('图片不能超过 8MB', true); fileInput.value = ''; return; }
       try {
-        const dataUrl = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(new Error('读取失败'));
-          reader.readAsDataURL(file);
-        });
-        if (!uploadCurrent()) return;
-        const up = await request('POST', '/api/uikit/background', { data: dataUrl });
+        showUploadStatus('正在读取背景文件…');
+        const up=await uploadBackgroundFile(file,{request,isCurrent:uploadCurrent,onProgress:message=>{if(uploadCurrent())showUploadStatus(message);}});
         if (!uploadCurrent()) return;
         // 新图进来后重置裁切参数：默认整页铺满、无旋转，避免沿用上一张的构图
+        // A newly selected image must be visible even if the old one was hidden.
+        // Read the current value after upload so an intervening opacity edit wins.
+        if (Number(currentScheme().bgOpacity) === 0) queue(`${editorSlot}.bgOpacity`, 0.2);
         queue(`${editorSlot}.bgImage`, up.url);
         queue(`${editorSlot}.bgRotate`, 0);
         queue(`${editorSlot}.bgZoom`, 1);
         queue(`${editorSlot}.bgOffsetX`, 0);
         queue(`${editorSlot}.bgOffsetY`, 0);
+        if(isVideoBackground(up.url)&&currentScheme().bgFit==='repeat')queue(`${editorSlot}.bgFit`,'cover');
         // This request owns the new reference; its redraw must not cancel a
         // picker already opened for the same slot while this upload was pending.
         backgroundUploadImage = up.url;
         pushTheme();
-        report(`背景图已上传（${Math.round(up.bytes / 1024)}KB），可拖动选框调整范围`);
+        const feedback=`${isVideoBackground(up.url)?'视频':'图片'}已按原文件导入 · ${file.size>=1024*1024?(file.size/1024/1024).toFixed(1)+'MB':Math.round(file.size/1024)+'KB'}`;
+        showUploadStatus(feedback);report(feedback);
         refreshBackgroundKit?.();
       } catch (error) {
-        if (uploadCurrent()) report(`上传失败：${error.message}`, true);
+        if (uploadCurrent()) {showUploadStatus(error.message,true);report(`上传失败：${error.message}`, true);saveFeedback('error',error.message);}
       } finally { if (uploadCurrent()) fileInput.value = ''; }
     });
 
@@ -1204,6 +1213,7 @@ function render() {
         && backgroundEditor === editor && currentMode() === mode;
     }
     const editor = createBackgroundEditor({
+      getViewport:()=>backgroundViewport,
       getImage: () => form.value(P('bgImage')) ?? '',
       getValues: () => ({
         bgRotate: form.value(P('bgRotate')) ?? 0,
@@ -1225,12 +1235,14 @@ function render() {
       onClear: () => {
         if (!currentEditor()) return;
         ++backgroundUploadVersion;
+        backgroundUploadFeedback=null;
         queue(`${editorSlot}.bgImage`, '');
         pushTheme();
         renderKit();
       },
     });
     backgroundEditor = editor;
+    if(backgroundUploadFeedback)editor.setUploadStatus(backgroundUploadFeedback.message,backgroundUploadFeedback.failed);
     bgWrap.append(bgTitle, bgNote, editor.element, fileInput);
     kit.fields.append(bgWrap);
 
@@ -1249,8 +1261,8 @@ function render() {
       });
       wrap.append(title, input, hint); kit.fields.append(wrap);
     };
-    slider('bgOpacity', '背景图不透明度', 0, 1, 0.02, (v) => `${Math.round(v * 100)}%`);
-    slider('bgBlur', '背景图模糊', 0, 20, 1, (v) => `${v}px`);
+    slider('bgOpacity', '背景不透明度', 0, 1, 0.02, (v) => `${Math.round(v * 100)}%`);
+    slider('bgBlur', '背景模糊', 0, 20, 1, (v) => `${v}px`);
 
     // ⑥ 形状 / 布局
     slider('radius', '圆角基准', 0, 16, 1, (v) => `${v}px`);
@@ -1274,7 +1286,7 @@ function render() {
       kit.fields.append(wrap);
       if(['bgFit','density','sidebar','btnAlign'].includes(key))appearanceChoices.push(mountChoiceCards(select).dispose);
     };
-    pick('bgFit', '背景图铺法', [['cover', '铺满'], ['contain', '完整显示'], ['repeat', '平铺']]);
+    pick('bgFit', '背景铺法', [['cover', '铺满'], ['contain', '完整显示'], ...(!isVideoBackground(effective.bgImage)?[['repeat','平铺']]:[])]);
     pick('density', '间距密度', [[0.85, '紧凑'], [1, '标准'], [1.25, '宽松']]);
     pick('sidebar', '侧边栏', [['left', '左侧'], ['right', '右侧'], ['hidden', '隐藏']]);
     pick('btnAlign', '按钮排布', [['left', '靠左'], ['center', '居中'], ['right', '靠右']]);
@@ -1308,7 +1320,12 @@ function render() {
     }));
     kit.fields.append(actions);
     const personalization=renderAppearanceControls({effective,path:P,change:(key,value)=>{queue(P(key),value);pushTheme();}});appearanceChoices.push(personalization.dispose);
-    presetRow.append(undo);organizeAppearance(kit.fields,{background:bgWrap,presets:presetWrap,themeHeader:head,personalization:personalization.groups,open:openAppearanceGroups});
+    const feels=renderAppearanceFeels({effective,change:(tokens,group,id)=>{for(const [key,value]of Object.entries(tokens))queue(P(key),value);pushTheme();renderKit();kit.fields.querySelector(`[data-appearance-feel="${group}"] [data-feel-value="${id}"]`)?.focus();}});
+    presetRow.append(undo);organizeAppearance(kit.fields,{background:bgWrap,presets:presetWrap,themeHeader:head,quick:feels,personalization:personalization.groups,open:openAppearanceGroups});
+    const visualEntry=document.createElement('div');visualEntry.className='appearance-visual-entry full';
+    const visualCopy=document.createElement('div'),visualTitle=document.createElement('strong'),visualHint=document.createElement('small');
+    visualTitle.textContent='点哪里，改哪里';visualHint.textContent='单独调整任意元素，或统一修改同类控件。变化立即可见，自动保存。';visualCopy.append(visualTitle,visualHint);
+    visualEntry.append(visualCopy,button('点选编辑',async()=>{await saveAll();await themePreview.flush();await openVisualEditor();},'primary'));kit.fields.prepend(visualEntry);
   }
 
   // 「界面预设」切换 → 重建（编辑目标换了，控件路径随之改变）
@@ -1522,6 +1539,7 @@ document.addEventListener('focusout',settingsBlur);
 document.addEventListener('close',settingsBlur,true);
 onLeave(()=>{liveSettings.dispose();document.removeEventListener('focusout',settingsBlur);document.removeEventListener('close',settingsBlur,true);});
 onShellEvent((name, payload) => {
+  if(name==='viewport-size'&&Number.isFinite(payload?.width)&&Number.isFinite(payload?.height)&&payload.width>0&&payload.height>0){backgroundViewport={width:payload.width,height:payload.height};backgroundEditor?.resize();}
   if(name==='hello')liveSettings.request();
   if(['plugin-loaded','plugin-unloaded','plugin-error'].includes(name)){void refreshToolAvailability();liveSettings.request();}
   if (name === 'onebot-status') settingsStructure?.updateRuntime({onebot:payload});

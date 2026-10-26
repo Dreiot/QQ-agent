@@ -22,6 +22,7 @@ import {createStartupNavigation} from './startup-navigation.js';
 import {createDestructiveFeedback} from './destructive-feedback.js';
 import {createPauseControls} from './pause-controls.js';
 import {createAccountSwitcher} from './account-switcher.js';
+import {createVisualEditor} from './visual-editor.js';
 import {readPanelTarget,panelLocationUrl} from './account-navigation.js';
 import {accountStorageKey,currentAccountScope} from '../panels/account-scope.js';
 
@@ -77,6 +78,7 @@ const consoleAuth=await createConsoleAuth(),token=consoleAuth.token;
 const api=new ApiClient({token}),state=new StateStore();
 const controlApi=new ApiClient({token,base:'',onTokenChange:next=>{api.setToken(next);accountSwitcher?.setToken(next);}});
 let panelTransition=Promise.resolve(),accountSwitcher=null,currentPanelId=null;
+let visualEditor=null;
 let sse=null;
 api.recoverAuth=async({token:failedToken})=>{
   if(!await consoleAuth.recover(failedToken))return false;
@@ -229,6 +231,10 @@ const registry=new PanelRegistry({
     return {ok:true};
   },
 });
+visualEditor=createVisualEditor({api,registry,notify:toast,navigate:id=>open(id),getPanel:()=>currentPanelId});
+registry.onAppearance=(method,payload,page)=>visualEditor.handle(method,payload,page);
+registry.visualEditorState=()=>visualEditor.getState();
+window.addEventListener('pagehide',event=>{if(!event.persisted)visualEditor.dispose();});
 updateNotice=createUpdateNotice({api:controlApi,onStatus:status=>registry.emit('update-status',status)});
 function renderNav(){
   const existing=new Map([...nav.querySelectorAll('button[data-panel]')].map(button=>[button.dataset.panel,button]));
@@ -343,8 +349,10 @@ async function navigateAccount(url){
   }
 }
 accountSwitcher=createAccountSwitcher({host:document.querySelector('#account-controls'),api:controlApi,notify:toast,navigate:navigateAccount,getCurrentPanel:()=>currentPanelId,onAccounts:rows=>{registry.emit('accounts',{});const multiple=rows.length>1;if(multiple!==hasMultipleAccounts){hasMultipleAccounts=multiple;renderRuntime();}},openConnections:account=>open('settings',{section:'onebot',connectQQ:account?.accountId||true}),beforeDisconnect:async()=>{
+  await visualEditor?.close();
   await panelTransition;const previous=registry.current?.id;await registry.unmount();return async()=>{if(previous)await registry.mount(previous);};
 },beforeSwitch:async()=>{
+  await visualEditor?.close();
   await panelTransition;await registry.flush();
   // Retain the rendered account until the browser captures it. Pagehide owns
   // disposal, keeping all old requests and events bound to the old document.
@@ -387,7 +395,9 @@ function syncThemeFromConfig(config) {
   if (json === lastThemeJson) return;
   lastThemeJson = json;
   try {
-    registry.applyThemeEverywhere(resolveScheme(uikit));
+    visualEditor?.configChanged(config);
+    const theme=resolveScheme(uikit);
+    registry.applyThemeEverywhere(visualEditor?.mergeTheme(theme)||theme);
   } catch (err) {
     console.warn('[theme] 应用配置里的外观失败:', err?.message ?? err);
   }

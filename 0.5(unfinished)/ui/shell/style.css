@@ -6,14 +6,14 @@ html, body { height: 100%; }
 body { position: relative; isolation: isolate; margin: 0; overflow: hidden; background: var(--canvas, var(--bg)); }
 /* One optional host backdrop. Fit the original plane, then rotate and enlarge
    the selected ROI; isolated panels never paint a second background layer. */
-body::before {
+body::before,.background-video {
   content: '';
   display: none;
   position: fixed;
-  width: max(100vw, 177.777778vh);
-  height: max(100vh, 56.25vw);
-  left: calc((100vw - max(100vw, 177.777778vh)) / 2);
-  top: calc((100vh - max(100vh, 56.25vw)) / 2);
+  width: 100vw;
+  height: 100vh;
+  left: 0;
+  top: 0;
   z-index: -1;
   pointer-events: none;
   background-image: var(--bg-image, none);
@@ -28,6 +28,8 @@ body::before {
   animation: none;
 }
 body[data-bg-image="on"]::before { display: block; }
+body[data-bg-media="video"]::before{display:none}
+.background-video{display:block;object-fit:var(--bg-video-fit,cover)}
 .app-shell {
   --rail-expanded-width: var(--sidebar-width,224px);
   --rail-width: var(--rail-expanded-width);

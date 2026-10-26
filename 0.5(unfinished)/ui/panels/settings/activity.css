@@ -1,8 +1,8 @@
 /* Geometry from develop/ui's 0.4 setcard/tier/ac components. Colors are
    deliberately selected from the current panel theme, never legacy literals. */
 .activity-card {
-  --activity-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
-  font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  --activity-mono:var(--font-mono,monospace);
+  font:14px/1.6 var(--font-sans,system-ui);
   border-radius:11px;overflow:hidden;container-type:inline-size;letter-spacing:normal;
 }
 .settings-fold.activity-card > summary {
@@ -23,7 +23,7 @@
 .activity-card .activity-head-controls .settings-launcher > button { min-width:0; }
 .activity-card button {
   display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:var(--control-height);min-width:0;
-  padding:0 14px;border-radius:8px;clip-path:none;font:600 12.5px/1.4 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  padding:0 14px;border-radius:8px;clip-path:none;font:600 12.5px/1.4 var(--font-sans,system-ui);
   white-space:nowrap;letter-spacing:normal;text-transform:none;box-shadow:none;
 }
 .activity-card button:hover:not(:disabled) { transform:none; }
@@ -57,7 +57,7 @@
 .activity-card .activity-editor { min-width:0; }
 .activity-card .activity-tier-wrap { display:flex;flex-direction:column;gap:4px; }
 .activity-card .activity-tier-bar { position:relative;height:42px;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden;background:var(--surface);cursor:pointer;touch-action:none; }
-.activity-card .activity-tier-band { position:absolute;inset-block:0;display:flex;align-items:center;justify-content:initial;padding:0 0 0 10px;border:0;font:650 11px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;color:var(--muted);white-space:nowrap; }
+.activity-card .activity-tier-band { position:absolute;inset-block:0;display:flex;align-items:center;justify-content:initial;padding:0 0 0 10px;border:0;font:650 11px/1.6 var(--font-sans,system-ui);color:var(--muted);white-space:nowrap; }
 .activity-card .activity-tier-band:nth-child(1) { background:color-mix(in srgb,var(--accent) 8%,transparent); }
 .activity-card .activity-tier-band:nth-child(2) { background:color-mix(in srgb,var(--good) 10%,transparent); }
 .activity-card .activity-tier-band:nth-child(3) { background:color-mix(in srgb,var(--warn) 11%,transparent); }

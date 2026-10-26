@@ -8,7 +8,7 @@ const EASING = 'cubic-bezier(.2,.75,.2,1)';
 const INITIAL = '.brand,.rail-heading,#nav,.workspace-context,.head,.toolbar,main > .grid,main > .card,main > .metrics,.settings-aside,.runtime-readiness,[data-motion="mount"]';
 const APPEND = '.message,.toast,.permission-ask,.permission-card,.list-item,.settings-section,[data-motion="append"]';
 const HIDDEN = '[hidden],.hidden,.is-hidden,dialog:not([open]),[data-motion="off"]';
-const DEFAULT_PANELS = new Set(['sessions','chats','memory','usage','skills','plugins','logs','settings','community']);
+const DEFAULT_PANELS = new Set(['sessions','chats','rules','memory','usage','skills','plugins','logs','settings','community']);
 
 /** Read only visual preferences; these values never scale behavior timers. */
 export function interfaceMotion(doc, media = doc?.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)')) {

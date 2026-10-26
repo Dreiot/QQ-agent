@@ -1,0 +1,29 @@
+body[data-panel=rules] main{max-width:none;display:flex;flex-direction:column;min-height:100%;gap:14px}
+body[data-panel=rules] .head{margin:0}
+#rules-editor{min-width:0;flex:1}
+#rules-editor>.management{border:1px solid var(--line);border-radius:var(--radius,10px);background:var(--surface);padding:12px}
+#rules-editor .management-empty{min-height:55vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px}
+#rules-editor .management-flow{min-height:58vh}
+.management-rule-settings{align-items:flex-end;gap:12px;margin-bottom:12px}
+.management-rule-settings>.management-field{flex:0 1 230px;min-width:160px;margin:0}.management-rule-settings>.management-field:has(input[type=number]){flex-basis:160px}
+.management-rule-settings>.management-field>span{font-size:11px;color:var(--muted)}
+.management-rule-settings>.management-field>input{border:1px solid var(--line);border-radius:6px;background:var(--surface-2);padding:8px 10px;min-height:36px}
+.management-rule-settings>.rules-scope-card{display:flex;align-items:center;gap:12px;min-height:40px;padding:9px 12px;border:1px solid var(--line);background:var(--surface-2);border-radius:7px;white-space:normal;text-align:left}
+.management-rule-settings>.rules-scope-card svg{flex:none;color:var(--accent)}
+.management-rule-actions{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-left:auto}.management-rule-actions button{min-height:34px;font-size:12px}
+@media(max-width:900px){.management-rule-actions{margin-left:0;flex-basis:100%;justify-content:flex-end}}
+#rules-editor .switch-card{position:relative;display:inline-flex;align-items:center;justify-content:space-between;gap:24px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2);cursor:pointer}
+#rules-editor .switch-card input{position:absolute;inset:0;opacity:0;width:100%;height:100%;min-height:0;margin:0;cursor:inherit}
+#rules-editor .switch-card:after{content:'';width:20px;height:20px;border:1px solid var(--muted);border-radius:50%;display:grid;place-items:center;flex:none;font-size:13px}
+#rules-editor .switch-card:has(input:checked){border-color:var(--good);background:color-mix(in srgb,var(--good) 14%,var(--surface-2))}
+#rules-editor .switch-card:has(input:checked):after{content:'✓';color:var(--good);border-color:var(--good)}
+#rules-editor .switch-card:has(input:focus-visible){outline:1px solid var(--accent);outline-offset:1px}
+#rules-editor .switch-card:has(input:disabled){opacity:.6;cursor:wait}
+@media(max-width:650px){#rules-editor>.management{padding:8px}.head p{font-size:11px}}
+
+.settings-save-toast{position:fixed;inset:16px 20px auto auto;margin:0;padding:11px 16px;z-index:2147483647;display:flex;align-items:center;gap:10px;max-width:min(460px,calc(100vw - 32px));border:1px solid var(--good);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 8px 30px #0005;font:13px/1.5 var(--font-sans,system-ui)}
+.settings-save-toast[hidden]{display:none!important;}
+.settings-save-toast[data-state=saved]>span:first-child{color:var(--good);}
+.settings-save-toast[data-state=saving]{border-color:var(--line);}
+.settings-save-toast[data-state=error]{border-color:var(--bad);}
+.settings-save-toast button{padding:2px 8px;min-height:28px;}

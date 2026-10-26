@@ -7,6 +7,7 @@ const solid = (role,d) => ({role,d,solid:true});
 const ready = () => solid('ready','M16.1 16.3l1.5 1.6 3-3.7 1.1.9-4 4.9-2.7-2.8z');
 const pending = () => line('gap','M18.5 14.5v3l1.8 1.1M22 17.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z');
 const GLYPHS = Object.freeze({
+  rules:[line('rail','M6 5.5h5a2 2 0 0 1 2 2v9a2 2 0 0 0 2 2h3M13 12h5'),line('nodes','M7 5.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM22 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM22 18.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z')],
   sessions:[line('rail','M6 8v3m0 3v3M10 6h9M10 12h3M10 18h9'),line('nodes','M7.5 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM7.5 12a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM7.5 18.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z'),solid('cursor','M16 9.2l4.2 2.8-4.2 2.8z')],
   chats:[line('back','M8 5V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-1'),line('shell','M5 7h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9l-4 3v-3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z'),solid('message','M7.1 12.5a.9.9 0 1 1-1.8 0 .9.9 0 0 1 1.8 0zM10.9 12.5a.9.9 0 1 1-1.8 0 .9.9 0 0 1 1.8 0zM14.7 12.5a.9.9 0 1 1-1.8 0 .9.9 0 0 1 1.8 0z')],
   memory:[line('index','M6 3.5H4.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2H6M18 3.5h1.5a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H18'),line('portrait','M13 8.2a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM5.5 17.7a4.5 4.5 0 0 1 9 0'),line('impressions','M17 8h2M17 12h2M17 16h2')],

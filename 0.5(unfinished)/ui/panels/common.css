@@ -1,3 +1,5 @@
+@import url('./conversation-picker.css');
+@import url('./local-fonts.css');
 @import url('./design-system.css');
 
 /* Panel structure stays in its own document. The host paints one optional backdrop. */
@@ -106,11 +108,12 @@ body[data-custom-state-paint="on"] :is(.list-item.selected,.list-item.is-active)
 /* Functional background editor coordinates remain separate from the page backdrop. */
 .bg-editor { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(180px, .7fr); gap: var(--sp-4); align-items: start; grid-column: 1 / -1; padding: var(--sp-4); border: 1px solid var(--line); background: var(--surface-2); }
 .bg-editor-panel { display: grid; gap: var(--sp-3); min-width: 0; }
-.bg-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid var(--line-strong); background: var(--bg); cursor: grab; touch-action: none; user-select: none; }
+.bg-stage { position: relative; width: min(100%,calc(min(54vh,560px)*var(--bg-stage-ratio,1))); justify-self:center; aspect-ratio: var(--bg-stage-ratio,1); overflow: hidden; border: 0; outline:1px solid var(--line-strong); background: var(--bg); cursor: grab; touch-action: none; user-select: none; }
 .bg-stage.is-dragging { cursor: grabbing; }
 .bg-stage.is-dragging * { user-select: none; -webkit-user-drag: none; }
 .bg-stage-img, .bg-stage-repeat { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(var(--bg-stage-rotate, 0deg)); transform-origin: center; pointer-events: none; }
-.bg-stage-img { object-fit: var(--bg-stage-fit, cover); }
+.bg-stage-img,.bg-stage-video { object-fit: var(--bg-stage-fit, cover); }
+.bg-stage-video{position:absolute;inset:0;width:100%;height:100%;transform:rotate(var(--bg-stage-rotate,0deg));transform-origin:center;pointer-events:none}
 .bg-stage-mask { position: absolute; inset: 0; pointer-events: none; box-shadow: 0 0 0 9999px #00000040; }
 .bg-crop { position: absolute; border: 1px solid var(--accent); cursor: move; }
 .bg-crop-handle { position: absolute; width: 12px; height: 12px; border: 1px solid var(--accent); background: var(--surface); z-index: 2; }

@@ -36,6 +36,7 @@ export function createListChoiceDraft(selected = [], initialAll = false) {
     acceptRead(ticket, payload, kind) { if (closed || ticket !== generation) return false; const next = normalizeQQList(payload, kind); phase = next.phase; live = next.items; error = next.error; return true; },
     rejectRead(ticket, reason) { if (closed || ticket !== generation) return false; phase = 'failed'; error = String(reason?.message ?? reason); return true; },
     choose(id, checked) { if (closed || allowAll || phase !== 'ready' || !candidates().some(item => item.id === id)) return false; if (draft.has(id) === checked) return false; checked ? draft.add(id) : draft.delete(id); revision++; error = ''; return true; },
+    add(id){id=String(id);if(closed||allowAll||!/^[1-9]\d{0,14}$/.test(id)||draft.has(id))return false;draft.add(id);phase='ready';revision++;error='';return true;},
     chooseAll(value){if(closed||allowAll===(value===true))return false;allowAll=value===true;allTouched=true;allRevision=++revision;error='';return true;},
     beginCommit() { if (!canSubmit()) return null; if (!staged && !allTouched && same(draft, confirmed)) return { noop: true }; active = { attempt: ++sequence, revision, selected: [...draft],allowAll,policyChanged:allTouched||policyStaged,allRevision }; staged = true;policyStaged=active.policyChanged;error = ''; return structuredClone(active); },
     acceptCommit(receipt) { if (closed || !active || receipt.attempt !== active.attempt) return { ignored: true }; const sent = active; confirmed = new Set(sent.selected);if(allRevision===sent.allRevision)allTouched=false;active = null; staged = policyStaged = false;error = ''; return { close: revision === sent.revision, pending: allTouched||!same(draft, confirmed) }; },
@@ -95,13 +96,7 @@ export function openListChoice({ kind, load, getSelected, getAllowAll=()=>false,
   function draw() {
     if (closed) return;
     host.replaceChildren(); const view = state.view(), chosen = new Set(view.selected), query = search.value.trim().toLowerCase();
-    for (const item of view.candidates) {
-      if (query && !`${item.id} ${item.name}`.toLowerCase().includes(query)) continue;
-      const label = doc.createElement('label'); label.className = 'tool-toggle'; label.dataset.choiceId = item.id;
-      const checkbox = doc.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = chosen.has(item.id); checkbox.disabled = view.allowAll||view.phase !== 'ready' || !isCurrent();
-      const name = doc.createElement('span'); name.textContent = `${item.name} (${item.id})${item.savedOnly ? ' · 已保存，本次 QQ 列表未返回' : ''}`;
-      checkbox.addEventListener('change', () => { state.choose(item.id, checkbox.checked); status();autoSave.schedule(); }); label.append(checkbox, name); host.append(label);
-    }
+    renderQQChoiceRows({doc,host,view,query,disabled:!isCurrent(),onChange:(id,checked)=>{state.choose(id,checked);status();autoSave.schedule();}});
     status();
   }
   async function read() {
@@ -128,4 +123,15 @@ export function openListChoice({ kind, load, getSelected, getAllowAll=()=>false,
   search.addEventListener('input', draw); retry.addEventListener('click', () => { void read(); }); cancel.addEventListener('click', () => lifecycle.close());
   window.addEventListener('pagehide', dispose, { once: true }); doc.body.append(root); root.showModal(); void read();
   return { root, dispose: () => lifecycle.close() };
+}
+
+export function renderQQChoiceRows({doc,host,view,query='',disabled=false,onChange}){
+  host.replaceChildren();const chosen=new Set(view.selected),search=query.trim().toLowerCase();
+  for(const item of view.candidates){if(search&&!`${item.id} ${item.name}`.toLowerCase().includes(search))continue;
+    const label=doc.createElement('label');label.className='tool-toggle';label.dataset.choiceId=item.id;
+    const checkbox=doc.createElement('input');checkbox.type='checkbox';checkbox.checked=chosen.has(item.id);checkbox.disabled=disabled||view.allowAll||view.phase!=='ready';
+    const name=doc.createElement('span');name.textContent=`${item.name} (${item.id})${item.savedOnly?' · 已保存，本次 QQ 列表未返回':''}`;
+    const indicator=doc.createElement('span');indicator.className='settings-toggle-indicator qq-choice-indicator';indicator.setAttribute('aria-hidden','true');
+    checkbox.addEventListener('change',()=>onChange(item.id,checkbox.checked));label.append(checkbox,name,indicator);host.append(label);
+  }
 }

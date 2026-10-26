@@ -271,6 +271,8 @@ console.log('✓ 137 isolated panel theme consumption and readable custom accent
     assert.equal(sent.length, before, 'Sharing paint does not expose global events or other plugin data');
     await bridge.handle(event('theme.apply', { theme: { accent: '#ffffff' } }));
     assert.ok(sent.at(-1).error); assert.equal(applied, 0);
+    await bridge.handle(event('appearance.open',{}));assert.ok(sent.at(-1).error,'user panels cannot open the host appearance editor');
+    await bridge.handle(event('appearance.select',{selector:'button',kind:'button'}));assert.ok(sent.at(-1).error,'user panels cannot drive host element selection');
     await bridge.handle(event('api.request', { method: 'GET', path: '/api/config' }));
     assert.ok(sent.at(-1).error); assert.equal(rawApi, 0, 'A themed user panel still cannot consume ordinary host API');
     await bridge.handle(event('ctx.call', { tool: 'industrial__run', args: { sample: true }, ownerId: 'forged', generation: 'forged' }));

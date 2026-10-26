@@ -13,7 +13,7 @@ const NAMES = new Set([
   // LLM / 遥测 / 其它周期行为
   'llm.call', 'telemetry.tick', 'reminder.fire', 'market.install', 'vision.scan', 'feedback', 'status',
   // 周期同步结果（价格源 / 云端屏蔽名单，2026-10-06）：内核 emit，面板与日志可观察
-  'price-update', 'blocklist-sync',
+  'price-update', 'blocklist-sync', 'management.update',
 ]);
 
 // 插件可订阅的子集：只读观察类事件。写操作类事件（message.out 等）不开放给插件——

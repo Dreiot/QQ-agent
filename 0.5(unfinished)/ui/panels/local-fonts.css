@@ -1,0 +1,1 @@
+.local-font-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;min-width:0}.local-font-picker input{width:100%;min-width:0}.local-font-picker small{grid-column:1/-1;font:11px/1.5 var(--font-sans);color:var(--muted)}

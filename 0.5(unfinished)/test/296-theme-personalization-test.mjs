@@ -24,7 +24,7 @@ for(const field of fields){
 }
 checks.push('all '+fields.length+' settings share unique keys, defaults, groups and bounded values; CSS-shaped input is rejected');
 
-const edits=Object.fromEntries(fields.map(field=>[field.key,field.type==='range'?field.max:field.type==='boolean'?false:field.type==='color'?'#2468ac':field.options.at(-1).value]));
+const edits=Object.fromEntries(fields.map(field=>[field.key,field.type==='range'?field.max:field.type==='boolean'?false:field.type==='color'?'#2468ac':field.type==='font'?'Microsoft YaHei':field.options.at(-1).value]));
 const flat=migrateUikit(edits);
 for(const key of keys)assert.equal(resolveScheme(flat)[key],edits[key],key+' survives old flat storage');
 const mixed=migrateUikit({...edits,mode:'dark',dark:{fontSize:14,rail:'#112233'}});

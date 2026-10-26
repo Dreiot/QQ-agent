@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {registerBackgroundUploads} from './background-uploads.js';
 import { parseProviderCatalog } from './provider-catalog.js';
 import { providerEditPatch, providerModelEditPatch, providerCredentialRevision } from './provider-edit.js';
 import { chatIsVisible } from './chat-visibility.js';
@@ -357,6 +358,9 @@ function allowSend(cfg, chatKey) {
 }
 
 export function registerConsoleRoutes(http, deps) {
+  deps.components?.['console.localFonts']?.(http,deps);
+  deps.components?.['console.management']?.(http,deps);
+  registerBackgroundUploads(http,deps);
   (deps.components?.['console.localProtocols'] ?? registerLocalProtocolRoutes)(http,deps);
   // transport = 平台提供者（kernel 注入）。兼容键：老调用方可能仍传 onebot。
   const { config, sessions, store, memory, loader, orchestrator, log, capability, registry, permissions, startedAt = Date.now(), version = '0.5.0', appId = 'cn.kondius.qq-agent', dataDir } = deps;
@@ -835,6 +839,7 @@ export function registerConsoleRoutes(http, deps) {
   function applyConfigPatch(body) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) bad('配置必须是对象');
     if (['blocklist', 'globalBlocklist', 'communityExemptions'].some(key => Object.hasOwn(body, key))) bad('原始名单请通过专用编辑器保存，以防覆盖较新的成员修改');
+    if(Object.hasOwn(body,'management')){try{body={...body,management:deps.management.validate(body.management?.__replace__??body.management)};}catch(error){bad(error.message);}}
     config.update(body);
     // A failed backup leaves the original config writable so a settings draft
     // can be recovered, but must not restart the quiesced business instance.

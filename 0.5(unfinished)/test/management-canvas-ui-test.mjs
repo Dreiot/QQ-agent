@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {modelUiFixture} from './model-ui-fixture.mjs';
+import {settingsSection} from './settings-navigation.mjs';
+import {linkTargets} from '../ui/panels/rules/management-graph.js';
+const evidence=path.resolve('.qa-local/management-canvas');fs.mkdirSync(evidence,{recursive:true});
+const f=await modelUiFixture({config:{ui:{uikit:{mode:'dark',dark:{controlHeight:56,buttonPaddingY:18}}}}}),{page,frame}=f;
+const until=async(fn,message)=>{const end=Date.now()+10000;while(!await fn()){if(Date.now()>end)throw Error(message);await new Promise(r=>setTimeout(r,25));}};
+const box=async locator=>{const b=await locator.boundingBox();assert.ok(b,'control visible');return {x:b.x+b.width/2,y:b.y+b.height/2};};
+const drag=async(from,to)=>{await page.mouse.move(from.x,from.y);await page.mouse.down();await page.mouse.move(to.x,to.y,{steps:12});await page.mouse.up();};
+try{
+  await page.locator('#nav button[data-panel=rules]').click();await frame.locator('.management-toolbar').waitFor();await frame.getByRole('button',{name:'多路分流与汇合',exact:true}).click();await until(()=>f.disk().management.rules.length===1,'template save');
+  const r=f.disk().management.rules[0],split=r.nodes[1],help=r.nodes[3],join=r.nodes[5];
+  assert.equal(await frame.locator('.management-inspector').count(),0,'canvas gets full width until a node is selected');assert.equal(await frame.locator('.management-edge-label').count(),0,'branch labels must not be repeated on cables');
+  const socketSize=await frame.getByLabel('输出 2 欢迎',{exact:true}).evaluate(n=>({width:parseFloat(getComputedStyle(n).width),height:parseFloat(getComputedStyle(n).height),dotWidth:parseFloat(getComputedStyle(n,'::after').width),dotHeight:parseFloat(getComputedStyle(n,'::after').height)}));assert.equal(socketSize.width,22);assert.equal(socketSize.height,22);assert.equal(socketSize.dotWidth,socketSize.dotHeight,'custom button height must not turn sockets into ellipses');
+  await frame.getByRole('button',{name:'专注编辑',exact:true}).click();await frame.getByRole('button',{name:'总览',exact:true}).click();
+  const trigger=frame.getByLabel('编辑节点 1 收到消息',{exact:true}),before=await trigger.boundingBox();
+  const start=await box(trigger);await page.mouse.move(start.x,start.y);await page.mouse.down();await page.mouse.move(start.x+65,start.y+45,{steps:12});assert.equal(f.disk().management.rules[0].layout,undefined,'dragging must not write config for each frame');await page.mouse.up();
+  await until(()=>f.disk().management.rules[0].layout?.positions[r.nodes[0].id],'node position saved');const moved=structuredClone(f.disk().management.rules[0].layout);
+  assert.equal(f.disk().management.rules[0].enabled,false);assert.equal(await frame.locator('.management-inspector').count(),0,'drag must not open inspector');
+  const route=f.disk().management.rules[0].nodes[1].routes[0],output=frame.locator(`[data-output-node="${split.id}"][data-port="route:${route.id}"]`),input=frame.locator(`[data-input-node="${help.id}"]`);
+  await drag(await box(output),await box(input));await until(()=>linkTargets(f.disk().management.rules[0].nodes[1].routes[0].next).length===2,'dragged route did not reconnect');
+  assert.equal(f.disk().management.rules[0].nodes[1].routes[1].next,help.id);assert.equal(f.disk().management.rules[0].nodes[1].otherwise,join.id,'unrelated paths preserved');
+  await frame.getByRole('button',{name:'试运行',exact:true}).click();const simulation=frame.locator('dialog.management-dialog');await simulation.getByLabel('触发消息',{exact:true}).fill('你好');await simulation.getByRole('button',{name:'运行模拟',exact:true}).click();await until(async()=>await simulation.locator('.management-simulation-result').textContent().then(text=>text.includes('预计执行 2 次')),'both targets of one output must execute');assert.equal(await simulation.locator('.management-trace').filter({hasText:'汇合点'}).count(),1);await simulation.getByRole('button',{name:'关闭',exact:true}).click();
+  await frame.getByRole('button',{name:'撤销规则编辑',exact:true}).click();await until(()=>f.disk().management.rules[0].nodes[1].routes[0].next===r.nodes[2].id,'undo cable');
+  await frame.getByRole('button',{name:'重做规则编辑',exact:true}).click();await until(()=>linkTargets(f.disk().management.rules[0].nodes[1].routes[0].next).length===2,'redo cable');
+  // Cycles and cancelled gestures leave the previous connection intact.
+  const joinOutput=frame.locator(`[data-output-node="${join.id}"]`),splitInput=frame.locator(`[data-input-node="${split.id}"]`),oldNext=f.disk().management.rules[0].nodes[5].next;
+  await drag(await box(joinOutput),await box(splitInput));assert.equal(f.disk().management.rules[0].nodes[5].next,oldNext);assert.match(await frame.locator('.management-canvas-live').textContent(),/循环/);await frame.locator('.management-flow-viewport').press('Escape');
+  await output.click();await frame.locator('.management-flow-viewport').press('Escape');assert.equal(await frame.locator('.management-flow.connecting').count(),0);assert.deepEqual(f.disk().management.rules[0].nodes[1].routes[0].next,[r.nodes[2].id,help.id]);
+  // Click-to-connect supports keyboard/pointer users who cannot comfortably drag.
+  await output.click();await input.click();await until(()=>linkTargets(f.disk().management.rules[0].nodes[1].routes[0].next).length===2,'click to connect');
+  const blank=await frame.locator('.management-flow-viewport').boundingBox();await drag(await box(output),{x:blank.x+40,y:blank.y+35});const picker=frame.locator('dialog.management-dialog');await picker.waitFor({state:'visible'});await picker.getByRole('searchbox',{name:'搜索节点',exact:true}).fill('记录说明');await picker.getByRole('button',{name:'关闭',exact:true}).click();assert.equal(f.disk().management.rules[0].nodes.length,7,'cancelling the empty-space node picker preserves the old route');assert.deepEqual(f.disk().management.rules[0].nodes[1].routes[0].next,[r.nodes[2].id,help.id]);
+  // A cable can be removed without deleting either node, and undo restores it.
+  await frame.locator(`path[data-edge-target="${help.id}"][data-port="route:${route.id}"]`).press('Delete');await until(()=>f.disk().management.rules[0].nodes[1].routes[0].next===r.nodes[2].id,'disconnect one cable without erasing the sibling');assert.equal(await frame.locator('.management-node').count(),7);await frame.getByRole('button',{name:'撤销规则编辑',exact:true}).click();await until(()=>linkTargets(f.disk().management.rules[0].nodes[1].routes[0].next).length===2,'undo disconnect');
+  const zoomBefore=await frame.getByRole('button',{name:'恢复流程图原始大小',exact:true}).textContent(),view=await frame.locator('.management-flow-viewport').boundingBox();await page.mouse.move(view.x+view.width/2,view.y+view.height/2);await page.mouse.wheel(0,-150);await until(async()=>await frame.getByRole('button',{name:'恢复流程图原始大小',exact:true}).textContent()!==zoomBefore,'wheel zoom');await frame.getByRole('button',{name:'总览',exact:true}).click();
+  await frame.getByLabel('编辑节点 2 按消息内容分流',{exact:true}).click();assert.equal(await frame.locator('.management-inspector .management-route-card').count(),3);await frame.getByRole('button',{name:'收起节点设置',exact:true}).click();await until(async()=>await frame.locator('.management-inspector').count()===0,'close inspector');await frame.getByRole('button',{name:'总览',exact:true}).click();
+  const transform=await frame.locator('.management-flow-stage').evaluate(n=>n.style.transform),v=await frame.locator('.management-flow-viewport').boundingBox();await drag({x:v.x+30,y:v.y+25},{x:v.x+85,y:v.y+60});await until(async()=>await frame.locator('.management-flow-stage').evaluate(n=>n.style.transform)!==transform,'pan canvas');assert.deepEqual(f.disk().management.rules[0].layout,moved,'panning changes the view, not node coordinates');await frame.getByRole('button',{name:'总览',exact:true}).click();
+  await page.screenshot({path:path.join(evidence,'canvas-wide.png')});
+  await frame.getByRole('button',{name:'步骤列表',exact:true}).click();assert.equal(await frame.locator('.management-flow[data-mode=list] .management-node').count(),7);await frame.getByRole('button',{name:'流程图',exact:true}).click();
+  await page.reload();await page.locator('#nav button[data-panel=settings]').click();await page.locator('#nav button[data-panel=rules]').click();await frame.locator('.management-toolbar').waitFor();assert.deepEqual(f.disk().management.rules[0].layout,moved);assert.deepEqual(f.disk().management.rules[0].nodes[1].routes[0].next,[r.nodes[2].id,help.id]);await until(async()=>await frame.locator('.management-node').count()===7,'reload graph');
+  await page.setViewportSize({width:800,height:1000});await page.screenshot({path:path.join(evidence,'canvas-narrow.png')});assert.ok(await frame.locator('body').evaluate(n=>n.scrollWidth<=n.clientWidth+1));assert.deepEqual(f.errors,[]);assert.equal(f.outbound(),0);
+  console.log('PASS editable node canvas: real drag/reconnect, cycle rejection, cancellation, undo/redo, disconnect, wheel zoom, inspector, list view, persisted layout and narrow viewport');
+}finally{await f.close();}

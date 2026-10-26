@@ -9,7 +9,7 @@ import {authenticateNative,readNativeLogin,refreshNativeQr,injectNativeProcess,p
 
 const bad=(message,status=400)=>Object.assign(new Error(message),{status,expose:true});
 const loopback=new Set(['127.0.0.1','localhost','[::1]']);
-const nativePaths=/^\/api\/(?:auth\/(?:login|state)|login|agreements|processes(?:\/[1-9]\d*\/load)?|config\/\d{5,10}|QQLogin\/(?:CheckLoginStatus|GetQQLoginInfo|RefreshQRcode))$/;
+const nativePaths=/^\/api\/(?:auth\/(?:login|state)|login|agreements|processes(?:\/[1-9]\d*\/(?:load|refresh))?|config\/\d{5,10}|QQLogin\/(?:CheckLoginStatus|GetQQLoginInfo|RefreshQRcode))$/;
 const digest=value=>crypto.createHash('sha256').update(value).digest('hex');
 const allocatePort=()=>new Promise((resolve,reject)=>{const server=net.createServer();server.once('error',reject);server.listen(0,'127.0.0.1',()=>{const value=server.address().port;server.close(error=>error?reject(error):resolve(value));});});
 
@@ -47,7 +47,7 @@ async function ownedNapPassword(root){
 
 /** Native login bridge. Credentials stay here; public state contains only the
  * requested account controls. Closing a view cancels its I/O and SSE stream. */
-export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalThis.fetch,allocatePort:freePort=allocatePort,qrImageFor=null,verifyConnection=verifyProtocolWebSocket,onVerifiedAccount=null}={}){
+export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalThis.fetch,allocatePort:freePort=allocatePort,qrImageFor=null,verifyConnection=verifyProtocolWebSocket,onVerifiedAccount=null,getAccounts=null}={}){
   const fetchFn=fetchImpl||globalThis.fetch;
   let view=null,closed=false,authCache=null,pending=null,revision=0,openEpoch=0,eventTimer=null,externalIdentity=null,versionCache=null,committing=false;
   const qrCache=new Map();
@@ -104,7 +104,7 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
     if(query.sessionId){if(!view||view.id!==query.sessionId)throw bad('账号接入窗口已失效，请重新打开',409);
       const v=view,ctx=await context(v.preferredId);assertCurrent(v);if(ctx.key!==v.ctx.key){invalidate();throw bad('协议端实例已变化，请重新打开账号接入',409);}v.ctx={...v.ctx,...ctx,...(v.attachedAccount?{account:v.attachedAccount}:{})};return v;}
     const epoch=++openEpoch,ctx=await context(query.id);if(closed||epoch!==openEpoch)throw bad('账号接入窗口已失效，请重新打开',409);
-    abortView(view);clearTimeout(eventTimer);eventTimer=null;
+    abortView(view);pending=null;clearTimeout(eventTimer);eventTimer=null;
     if(authCache?.key!==ctx.key){authCache=null;pending=null;}
     view={id:crypto.randomUUID(),ctx,preferredId:query.id,controllers:new Set(),stream:null,streamFailed:false,closed:false,busy:false,read:null,hidden:false};
     return view;
@@ -139,34 +139,62 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
         if(!response.ok||!response.body){if(response.status===401){authCache=null;notify(v);}throw Error();}
         reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';
         while(current(v)&&v.stream===controller){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});if(buffer.length>2*1024*1024)throw Error();let match;
-          while((match=/\r?\n\r?\n/.exec(buffer))){const block=buffer.slice(0,match.index);buffer=buffer.slice(match.index+match[0].length);for(const line of block.split(/\r?\n/))if(line.startsWith('data:'))try{const event=JSON.parse(line.slice(5));if(event.kind==='ready'||['processes','qq-list','connections'].includes(event.resource)){const recovered=v.streamFailed;v.streamFailed=false;v.streamRetries=0;if(recovered||event.resource)notify(v);}}catch{/* Ignore malformed native metadata. */}}
+          while((match=/\r?\n\r?\n/.exec(buffer))){const block=buffer.slice(0,match.index);buffer=buffer.slice(match.index+match[0].length);for(const line of block.split(/\r?\n/))if(line.startsWith('data:'))try{const event=JSON.parse(line.slice(5));if(event.kind==='ready'||['processes','qq-list',...(getAccounts?['connections']:[])].includes(event.resource)){const recovered=v.streamFailed;v.streamFailed=false;v.streamRetries=0;if(recovered||event.resource)notify(v);}}catch{/* Ignore malformed native metadata. */}}
         }
       }catch{/* Retry an interrupted stream only while this exact visible login session exists. */}
       finally{if(reader){await reader.cancel().catch(()=>{});try{reader.releaseLock();}catch{}}if(v.stream===controller){v.stream=null;if(current(v)&&!v.hidden&&!controller.signal.aborted){v.streamFailed=true;notify(v);if(authCache?.key===v.ctx.key&&authCache.credential===credential){v.streamRetries=(v.streamRetries||0)+1;v.streamRetry=setTimeout(()=>{v.streamRetry=null;if(current(v)&&!v.hidden&&authCache?.credential===credential)startSnowStream(v,credential);},Math.min(30000,1000*2**Math.min(v.streamRetries-1,5)));v.streamRetry.unref?.();}}}}
     })();
   }
+  async function probeSnow(v,target){
+    try{
+      const body=await fetchLocal(v,`http://127.0.0.1:${target.httpPort}/get_login_info`,{headers:{Authorization:'Bearer '+target.token},timeoutMs:1500},65536);
+      if(body.status!=='ok'||body.retcode!==0||String(body.data?.user_id)!==target.accountId)return false;
+      assertCurrent(v);const controller=new AbortController();v.controllers.add(controller);
+      try{return await verifyConnection({...target,signal:controller.signal});}finally{v.controllers.delete(controller);}
+    }catch(error){assertCurrent(v);if(error.status===409)throw error;return false;}
+  }
+  function savedSnowTarget(v){
+    if(!v.ctx.account)return null;
+    try{const ob=config.get().onebot||{},http=new URL(ob.httpUrl),ws=new URL(ob.wsUrl),token=ob.accessToken;
+      if(http.protocol!=='http:'||ws.protocol!=='ws:'||http.hostname!=='127.0.0.1'||ws.hostname!=='127.0.0.1'||http.username||http.password||ws.username||ws.password||ob.httpAccessToken&&ob.httpAccessToken!==token)return null;
+      return{accountId:v.ctx.account,httpPort:Number(http.port),wsPort:Number(ws.port),token};
+    }catch{return null;}
+  }
+  async function snowWorkspaceConnected(v,target){
+    if(typeof getAccounts==='function'){
+      const accounts=await getAccounts();assertCurrent(v);
+      return accounts?.accounts?.some(row=>String(row.accountId)===target.accountId&&row.connected===true&&row.wanted!==false&&(!v.workspaceId||row.id===v.workspaceId))===true;
+    }
+    // Standalone adapters have no registry. They verify both endpoints during a
+    // read and exclude their own connection notifications from the refresh stream.
+    return probeSnow(v,target);
+  }
   async function settlePending(v){
     if(!pending||pending.key!==v.ctx.key)return;
     const target=pending;
+    if(target.until&&Date.now()>target.until)return;
+    if(target.settling)return;target.settling=true;
     try{const body=await fetchLocal(v,`http://127.0.0.1:${target.httpPort}/get_login_info`,{headers:{Authorization:'Bearer '+target.token},timeoutMs:1500},65536);
       if(body.status!=='ok'||body.retcode!==0||String(body.data?.user_id)!==target.accountId)return;
       assertCurrent(v);if(pending!==target)return;
       const controller=new AbortController();v.controllers.add(controller);
       let wsReady;try{wsReady=await verifyConnection({...target,signal:controller.signal});}finally{v.controllers.delete(controller);}
       assertCurrent(v);if(pending!==target||!wsReady)return;
-      const workspace=typeof onVerifiedAccount==='function'?await onVerifiedAccount({...target,provider:'snowluma'}):null;
+      // Endpoint probes may wait for the DLL. Workspace registration is a single explicit attempt.
+      target.registering=true;
+      const workspace=typeof onVerifiedAccount==='function'?await onVerifiedAccount({accountId:target.accountId,nickname:target.nickname,httpPort:target.httpPort,wsPort:target.wsPort,token:target.token,provider:'snowluma'}):null;
       assertCurrent(v);if(pending!==target)return;
       if(workspace?.workspaceId){v.workspaceId=workspace.workspaceId;v.attachedAccount=target.accountId;}
       if(workspace?.workspaceId&&workspace.workspaceId!=='primary'){/* A separate worker owns this connection; the primary QQ keeps running. */}
       else if(v.ctx.source==='managed')localProtocols.commitLoginConnection(v.ctx.instanceId,target.accountId,target);
       else{committing=true;try{config.update({onebot:{httpUrl:`http://127.0.0.1:${target.httpPort}`,wsUrl:`ws://127.0.0.1:${target.wsPort}`,accessToken:target.token,httpAccessToken:target.token}});externalIdentity.signature=onebotKey();externalIdentity.account=target.accountId;versionCache={signature:onebotKey(),provider:'snowluma',at:Date.now()};}finally{committing=false;}bus?.emit('status',{configUpdated:true});}
-      v.ctx.account=target.accountId;pending=null;
-    }catch(error){assertCurrent(v);if(error.status===409)throw error;}
+      v.ctx.account=target.accountId;v.snowTarget=target;v.verifiedSnow=target.accountId;pending=null;
+    }catch(error){assertCurrent(v);if(target.registering){pending=null;v.pendingError='QQ 连接已核验，但账号工作区未能就绪。请检查账号连接状态后重试。';notify(v);return;}if(error.status===409)throw error;}finally{target.settling=false;}
   }
   function followPending(v){
     if(!current(v)||v.hidden||v.pendingTimer||!pending||pending.key!==v.ctx.key)return;
     const target=pending;if(!target.until)target.until=Date.now()+30000;
-    if(Date.now()>target.until){pending=null;v.pendingError='所选 QQ 的连接尚未就绪，请检查协议端状态后重试。';notify(v);return;}
+    if(Date.now()>target.until){if(target.expiring)return;target.expiring=true;void(async()=>{let message='所选 QQ 的连接尚未就绪，请检查协议端状态后重试。';try{await target.rollback?.();}catch{message='连接超时，且未能恢复原配置，请打开协议端检查。';}if(!current(v)||pending!==target)return;pending=null;v.pendingError=message;notify(v);})();return;}
     v.pendingTimer=setTimeout(async()=>{v.pendingTimer=null;if(!current(v)||v.hidden||pending!==target)return;try{await settlePending(v);if(pending!==target)notify(v);else followPending(v);}catch{/* Closed views cannot commit or schedule further work. */}},750);v.pendingTimer.unref?.();
   }
   async function settlePreparedNap(v,result){
@@ -208,10 +236,10 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
         result=await settlePreparedNap(v,result);assertCurrent(v);
         await settlePending(v);assertCurrent(v);
         if(v.ctx.provider==='snowluma'&&!result.needsNative){
-          result.processes=result.processes.map(item=>!/^\d{5,10}$/.test(item.accountId)?{...item,selectable:false,reason:'请先在桌面 QQ 登录'}:item.status==='online'&&item.accountId!==v.ctx.account?{...item,selectable:true,reason:''}:item);
+          result.processes=result.processes.map(item=>!/^\d{5,10}$/.test(item.accountId)?{...item,selectable:false,reason:'请先在桌面 QQ 登录'}:item.status==='online'?{...item,selectable:true,reason:''}:item);
           if(pending?.key===v.ctx.key){result.stage='initializing';result.account=null;result.message='所选 QQ 正在接入，等待连接就绪…';followPending(v);}
-          else{const chosen=v.ctx.account&&result.processes.find(item=>item.accountId===v.ctx.account&&item.status==='online');result.stage=chosen?'connected':result.processes.some(item=>['loading','connecting'].includes(item.status))?'initializing':'waiting';result.account=chosen?{id:chosen.accountId,nickname:chosen.nickname}:null;}
-          if(v.pendingError){result.stage='error';result.error=v.pendingError;}
+          else{const target=v.snowTarget||savedSnowTarget(v),chosen=target&&result.processes.find(item=>item.accountId===target.accountId&&item.status==='online'),verified=chosen&&!v.pendingError&&await snowWorkspaceConnected(v,target);assertCurrent(v);if(!chosen)v.snowProof='';result.stage=verified?'connected':result.processes.some(item=>['loading','connecting'].includes(item.status))?'initializing':'waiting';result.account=verified?{id:chosen.accountId,nickname:chosen.nickname}:null;}
+          if(v.pendingError){result.stage='error';result.error=v.pendingError;result.account=null;}
           else if(v.streamFailed)result.error='实时更新暂时中断，正在重新连接；也可手动刷新。';
           startSnowStream(v,credential);
         }
@@ -233,18 +261,19 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
   async function refresh(body){return action(body,async v=>{if(v.ctx.provider!=='napcat')throw bad('当前协议端不提供二维码');const credential=await ensureCredential(v);if(typeof credential!=='string'||!credential)throw bad('请先连接协议端管理页面',401);await refreshNativeQr({request:requestFor(v),credential});});}
   async function inject(body){return action(body,async v=>{
     if(v.ctx.provider!=='snowluma')throw bad('当前协议端不提供进程接入');
-    v.pendingError='';
+    if(pending?.key===v.ctx.key)throw bad('所选 QQ 正在接入，请等待核验完成',409);
+    v.pendingError='';v.verifiedSnow='';
     const credential=await ensureCredential(v);if(typeof credential!=='string'||!credential)throw bad('请先连接协议端管理页面',401);
     const native=await readNativeLogin({provider:'snowluma',request:requestFor(v),credential});assertCurrent(v);
     const process=native.processes.find(item=>item.pid===body.pid&&(item.selectable||item.status==='online'));if(!process||!/^\d{5,10}$/.test(process.accountId))throw bad('请选择已在桌面 QQ 登录且可接入的账号');
     const httpPort=await freePort();let wsPort=await freePort();while(wsPort===httpPort)wsPort=await freePort();assertCurrent(v);
-    const target={key:v.ctx.key,accountId:process.accountId,nickname:process.nickname,httpPort,wsPort,token:crypto.randomBytes(32).toString('hex')};
-    await prepareSnowConnection({request:requestFor(v),credential,...target});assertCurrent(v);pending=target;
+    let prepared;try{prepared=await prepareSnowConnection({request:requestFor(v),credential,accountId:process.accountId,httpPort,wsPort,token:crypto.randomBytes(32).toString('hex'),reuseExisting:true,verifySaved:true});assertCurrent(v);}catch(error){assertCurrent(v);v.pendingError=error instanceof Error&&error.name==='NativeLoginError'?error.message:'未能保存此 QQ 的连接配置，请刷新后重试。';notify(v);throw bad(v.pendingError,502);}
+    const target={key:v.ctx.key,accountId:process.accountId,nickname:process.nickname,httpPort:prepared.httpPort,wsPort:prepared.wsPort,token:prepared.token,rollback:prepared.rollback};pending=target;
     try{if(process.status==='online'){const latest=await readNativeLogin({provider:'snowluma',request:requestFor(v),credential});assertCurrent(v);if(!latest.processes.some(item=>item.pid===body.pid&&item.status==='online'&&item.accountId===process.accountId))throw bad('所选 QQ 账号已变化，请重新选择',409);}else await injectNativeProcess({request:requestFor(v),credential,pid:body.pid,expectedAccountId:process.accountId});assertCurrent(v);await settlePending(v);followPending(v);notify(v);}
-    catch(error){if(pending===target)pending=null;throw bad('未能接入所选 QQ 账号，请刷新列表后重试',502);}
+    catch(error){if(pending===target)pending=null;v.pendingError='未能接入所选 QQ 账号，请刷新列表后重试';if(current(v)&&prepared.rollback)try{await prepared.rollback();}catch{v.pendingError='接入未完成，且未能恢复原连接配置，请打开协议端检查。';}notify(v);throw bad(v.pendingError,502);}
   });}
   async function get(query={}){const v=await resolveView(query);if(query.nativeOnly==='1')return state(v);v.hidden=false;if(v.authResult){const value=v.authResult;v.authResult=null;return value;}return read(v);}
-  function closeView(body={}){if(view?.id===body.sessionId){++openEpoch;abortView(view);view=null;clearTimeout(eventTimer);eventTimer=null;}return{ok:true};}
+  function closeView(body={}){if(view?.id===body.sessionId){++openEpoch;pending=null;abortView(view);view=null;clearTimeout(eventTimer);eventTimer=null;}return{ok:true};}
   function visibility(body={}){if(view?.id===body.sessionId&&body.visible===false){view.hidden=true;clearTimeout(view.pendingTimer);view.pendingTimer=null;clearTimeout(view.streamRetry);view.streamRetry=null;view.stream?.abort();view.stream=null;}return{ok:true};}
   const off=config.onChange?.(()=>{if(!committing&&view?.ctx.source==='external'&&externalIdentity?.signature!==onebotKey())invalidate();});
   const offRuntime=bus?.on?.('local-protocols',()=>{if(view?.ctx.source!=='managed')return;const ctx=localProtocols?.loginContext?.();if(!ctx||ctx.instanceId!==view.ctx.instanceId)invalidate();},{internal:true});

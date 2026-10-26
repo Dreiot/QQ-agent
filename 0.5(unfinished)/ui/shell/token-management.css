@@ -4,5 +4,5 @@
 .console-token-dialog p{overflow-wrap:anywhere;color:var(--muted);font-size:12px;line-height:1.7}
 .console-token-dialog #console-token-status{min-height:1.5em}
 @media(max-width:640px){.console-token-dialog .console-token-row{flex-wrap:wrap}.console-token-dialog .console-token-row input{flex-basis:100%}}
-.settings-save-toast{position:fixed;inset:16px 20px auto auto;margin:0;padding:11px 16px;display:flex;align-items:center;gap:10px;border:1px solid var(--good);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 8px 30px #0005;font:13px/1.5 system-ui;z-index:2147483647;}
+.settings-save-toast{position:fixed;inset:16px 20px auto auto;margin:0;padding:11px 16px;display:flex;align-items:center;gap:10px;border:1px solid var(--good);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 8px 30px #0005;font:13px/1.5 var(--font-sans,system-ui);z-index:2147483647;}
 .settings-save-toast[hidden]{display:none!important;}.settings-save-toast[data-state=error]{border-color:var(--bad);}.settings-save-toast[data-state=saving]{border-color:var(--line);}.settings-save-toast button{padding:2px 8px;min-height:28px;}

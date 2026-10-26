@@ -108,9 +108,10 @@ try {
     await page.locator('#nav button[data-panel="settings"]').click();
     await page.waitForFunction(() => document.querySelector('#panel-host iframe')?.src.includes('/panels/settings/'), null, { timeout: 15000 });
     const frame = page.frameLocator('#panel-host iframe');
-    await frame.locator('#status').filter({ hasText: '配置已读取' }).waitFor({ state: 'visible', timeout: 20000 });
+    await frame.locator('#field-ui-uikit-mode').waitFor({ state: 'attached', timeout: 20000 });
     await settingsSection(frame,'uikit');
     await frame.locator('.bg-editor').waitFor({ state: 'attached', timeout: 15000 });
+    for(const key of ['colors','layout','themes']){const fold=frame.locator(`details[data-appearance-group="${key}"]`);if(!await fold.evaluate(n=>n.open))await fold.locator(':scope>summary').click();}
     return frame;
   }
   const setColor = (frame, key, value) => frame.locator(`#field-uikit-${key}`).evaluate((el, v) => {
@@ -144,7 +145,7 @@ try {
 
   console.log('\n=== C. 另存为自定义方案：完整方案（含旧配色）落盘 ===');
   await frame.locator('#uikit-scheme-name').fill('验收方案');
-  await frame.locator('#section-uikit button', { hasText: '另存为自定义方案' }).click();
+  await frame.getByRole('button',{name:'另存主题',exact:true}).click();
   const saved = await waitConfig((c) => String(c.ui?.uikit?.mode || '').startsWith('custom:'), '另存为落盘');
   const id = saved.ui.uikit.mode.slice(7);
   const entry = saved.ui.uikit.custom[id];
@@ -160,8 +161,8 @@ try {
   frame = await openUikit();
   assert.equal(await frame.locator('#field-ui-uikit-mode').inputValue(), `custom:${id}`, '刷新后仍选中自定义方案');
   assert.equal(await frame.locator('#field-uikit-accent').inputValue(), '#00ff00', '刷新后方案配色回读正确');
-  const head = await frame.locator('#section-uikit').evaluate((card) => card.querySelector('.field-title')?.textContent || '');
-  assert.match(head, /正在编辑：自定义：验收方案/, `抬头标明当前方案（实际「${head}」）`);
+  const head = await frame.locator('#field-ui-uikit-mode').evaluate(select=>select.selectedOptions[0]?.textContent||'');
+  assert.match(head, /验收方案/, `方案选择显示当前名字（实际「${head}」）`);
   console.log(`✓ 刷新回读正确（${head.trim()}）`);
 
   console.log('\n=== E. 重命名自定义方案 ===');
@@ -190,7 +191,7 @@ try {
   const reset = await waitConfig((c) => c.ui?.uikit?.dark == null, '恢复出厂落盘');
   assert.equal(reset.ui.uikit.custom[id]?.name, '改名方案', '恢复出厂不动自定义方案');
   await page.waitForTimeout(300);
-  assert.equal(await frame.locator('#field-uikit-accent').inputValue(), '#d6e452', '即时回落终末地荧光黄绿');
+  assert.equal(await frame.locator('#field-uikit-accent').inputValue(), '#d6e452', '即时回落荧光黄绿');
   await page.goto(`${base}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' });
   frame = await openUikit();
   assert.equal(await frame.locator('#field-uikit-accent').inputValue(), '#d6e452', '刷新后仍是出厂强调色');

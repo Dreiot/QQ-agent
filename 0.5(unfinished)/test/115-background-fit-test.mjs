@@ -15,7 +15,8 @@ import { createKernel } from '../src/kernel/kernel.js';
 const root = path.resolve(import.meta.dirname, '..'), dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qqa-fit115-'));
 const log = { info() {}, warn() {}, error() {} };
 let config = createConfig({ dataDir, defaults: buildDefaultConfig(), log }); config.load();
-const w = 800, h = 450, imageUrl = '/ui/backgrounds/pattern.png', iw = 320, ih = 240;
+let w=800,h=450;
+const imageUrl = '/ui/backgrounds/pattern.png', iw = 320, ih = 240;
 const raw = Buffer.alloc((iw * 3 + 1) * ih), colors = [[210, 45, 65], [35, 190, 90], [45, 90, 215], [240, 205, 40]];
 for (let y = 0; y < ih; y++) for (let x = 0; x < iw; x++) {
   let color = colors[(y >= ih / 2 ? 2 : 0) + (x >= iw / 2 ? 1 : 0)];
@@ -30,6 +31,11 @@ const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk
 config.update({ telemetry: { enabled: false }, proactive: { enabled: false }, ui: { uikit: { mode: 'dark', dark: { bgImage: imageUrl, bgFit: 'repeat', bgOpacity: 1, bgBlur: 0, bgZoom: 1, bgRotate: 0, bgOffsetX: 0, bgOffsetY: 0 } } } });
 const files = {
   '/panels/theme.js': ['ui/panels/theme.js', 'text/javascript'],
+  '/panels/background-media.js': ['ui/panels/background-media.js', 'text/javascript'],
+  '/panels/account-scope.js': ['ui/panels/account-scope.js', 'text/javascript'],
+  '/panels/visual-style.js': ['ui/panels/visual-style.js', 'text/javascript'],
+  '/panels/motion.js': ['ui/panels/motion.js', 'text/javascript'],
+  '/panels/press-feedback.js': ['ui/panels/press-feedback.js', 'text/javascript'],
   '/panels/settings/bg-editor.js': ['ui/panels/settings/bg-editor.js', 'text/javascript'],
   '/panels/destructive-action.js': ['ui/panels/destructive-action.js', 'text/javascript'],
   '/panels/destructive-layout.js': ['ui/panels/destructive-layout.js', 'text/javascript'],
@@ -41,6 +47,10 @@ const files = {
   '/design-system.css': ['ui/panels/design-system.css', 'text/css'],
   '/panels/design-system.css': ['ui/panels/design-system.css', 'text/css'],
   '/icon-motion.css': ['ui/panels/icon-motion.css', 'text/css'],
+  '/press-feedback.css': ['ui/panels/press-feedback.css', 'text/css'],
+  '/extension-updates.css': ['ui/panels/extension-updates.css', 'text/css'],
+  '/panels/press-feedback.css': ['ui/panels/press-feedback.css', 'text/css'],
+  '/panels/extension-updates.css': ['ui/panels/extension-updates.css', 'text/css'],
   '/destructive-action.css': ['ui/panels/destructive-action.css', 'text/css'],
   '/panels/icon-motion.css': ['ui/panels/icon-motion.css', 'text/css'],
   '/panels/destructive-action.css': ['ui/panels/destructive-action.css', 'text/css'],
@@ -49,7 +59,7 @@ const files = {
   '/panels/assets/endfield/archive.png': ['ui/panels/assets/endfield/archive.png', 'image/png'],
   '/panels/assets/endfield/emblem.png': ['ui/panels/assets/endfield/emblem.png', 'image/png'],
 };
-const editorHtml = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/common.css"><style>.bg-editor{display:block}.bg-stage{width:800px;height:450px;border:0;border-radius:0}</style><div id="mount"></div><script type="module">import{createBackgroundEditor}from'/panels/settings/bg-editor.js';const values=await(await fetch('/state')).json();const editor=createBackgroundEditor({getImage:()=>values.bgImage,getValues:()=>values,onChange:p=>{Object.assign(values,p);editor.refresh();},onUpload(){},onClear(){}});document.querySelector('#mount').append(editor.element);window.setValues=p=>{Object.assign(values,p);editor.refresh();};editor.refresh();await document.querySelector('img').decode();window.ready=true;</script>`;
+const editorHtml = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/common.css"><style>.bg-editor{display:block}.bg-stage{width:800px;height:450px;border:0;border-radius:0}</style><div id="mount"></div><script type="module">import{createBackgroundEditor}from'/panels/settings/bg-editor.js';const values=await(await fetch('/state')).json();window.scene={width:800,height:450};const editor=createBackgroundEditor({getViewport:()=>window.scene,getImage:()=>values.bgImage,getValues:()=>values,onChange:p=>{Object.assign(values,p);editor.refresh();},onUpload(){},onClear(){}});window.editor=editor;document.querySelector('#mount').append(editor.element);window.setValues=p=>{Object.assign(values,p);editor.refresh();};editor.refresh();await document.querySelector('img').decode();window.ready=true;</script>`;
 const hostHtml = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/shell.css"><script type="module">import{DEFAULT_THEME,writeTheme}from'/panels/theme.js';window.setValues=p=>writeTheme({...DEFAULT_THEME,bgImage:'${imageUrl}',bgOpacity:1,bgBlur:0,bgZoom:1,bgRotate:0,bgOffsetX:0,bgOffsetY:0,...p},{persist:false});setValues(await(await fetch('/state')).json());const image=new Image();image.src='${imageUrl}';await image.decode();window.ready=true;</script>`;
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://local').pathname;
@@ -120,7 +130,12 @@ try {
   const repeated = await host.evaluate(() => { const s = getComputedStyle(document.body, '::before'); return { repeat: s.backgroundRepeat, size: s.backgroundSize }; });
   assert.equal(repeated.repeat, 'repeat'); assert.match(repeated.size, /^50%(?: auto)?$/, 'computed CSS may omit the default auto height');
   const modeShots = new Map();
-  async function check(values) {
+  async function check(values,size) {
+    if(size){
+      w=size.width;h=size.height;
+      await host.setViewportSize({width:w,height:h});await editor.setViewportSize({width:w,height:h+250});
+      await editor.evaluate(({w,h})=>{window.scene={width:w,height:h};const stage=document.querySelector('.bg-stage');stage.style.width=w+'px';stage.style.height=h+'px';window.editor.refresh();},{w,h});
+    }
     for (const page of [editor, host]) { await page.evaluate(v => setValues(v), values); await paint(page); }
     const hostExpected = await host.evaluate(reference, { values, w, h, imageUrl, preview: false });
     const previewExpected = await editor.evaluate(reference, { values, w, h, imageUrl, preview: true });
@@ -147,6 +162,9 @@ try {
   assert.equal((await replay.screenshot()).equals(moved), true, 'disk replay reproduces exactly the tiled ROI');
 
   console.log('· Actual production settings picker updates preview and host immediately and saves the unchanged structure');
+  for(const size of [{width:1200,height:600},{width:720,height:960},{width:900,height:900}])for(const fit of ['cover','contain','repeat'])for(const angle of [0,45]){
+    await check({bgFit:fit,bgZoom:.57,bgRotate:angle,bgOffsetX:12,bgOffsetY:-9},size);
+  }
   // Keep the production module/asset closure, without loading any extensions
   // installed beside the developer's checkout during this settings regression.
   const appRoot = path.join(dataDir, 'application');
@@ -160,8 +178,9 @@ try {
   kernel.config.update({ server: { port: 0, token: 'fit115' } }); const port = await kernel.start();
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } }); observe(page, 'production');
   await page.goto(`http://127.0.0.1:${port}/?token=fit115`); await page.locator('#nav button[data-panel=settings]').click();
-  const frame = page.frameLocator('#panel-host iframe'); await frame.locator('#status').filter({ hasText: '配置已读取' }).waitFor();
+  const frame = page.frameLocator('#panel-host iframe'); await frame.locator('#settings-sidebar a[data-target=appearance]').waitFor({state:'visible'});
   await settingsSection(frame,'uikit');
+  await frame.locator('details[data-appearance-group=background]>summary').click();
   await frame.locator('#section-uikit input[type=file]').setInputFiles({ name: 'pattern.png', mimeType: 'image/png', buffer: png });
   for (let i = 0; i < 200 && !await frame.locator('.bg-stage-img').evaluate(img => img.complete && img.naturalWidth > 0); i++) await page.waitForTimeout(20);
   assert.ok(await frame.locator('.bg-stage-img').evaluate(img => img.complete && img.naturalWidth > 0));
@@ -175,7 +194,7 @@ try {
     const response = await responsePromise; assert.equal(response.status(), 200);
     const result = await response.json(); assert.equal(result.ok, true);
     for (const [key, value] of Object.entries(expected)) assert.equal(result.config.ui.uikit.dark[key], value, 'acknowledgement belongs to this edit');
-    await frame.locator('#status').filter({ hasText: '已保存' }).waitFor();
+    await frame.locator('.settings-save-toast[data-state=saved]').waitFor({state:'attached'});
     const disk = JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8'));
     for (const [key, value] of Object.entries(expected)) {
       assert.equal(kernel.config.get().ui.uikit.dark[key], value); assert.equal(disk.ui.uikit.dark[key], value);
@@ -197,12 +216,11 @@ try {
       // Register before changing the field so a 700ms autosave cannot win the
       // race unnoticed. Both autosave and the button use the production save queue.
       const saved = saveResponse({ bgFit: mode });
-      await frame.locator('#field-uikit-bgFit').selectOption(mode);
+      await frame.getByRole('radiogroup',{name:'背景铺法',exact:true}).locator(`[role=radio][data-value="${mode}"]`).click();
       const preview = await frame.locator('.bg-stage').evaluate(stage => ({ fit: getComputedStyle(stage.querySelector('img')).objectFit,
         repeated: getComputedStyle(stage.querySelector('.bg-stage-repeat')).display, size: getComputedStyle(stage.querySelector('.bg-stage-repeat')).backgroundSize }));
       assert.equal(preview.repeated !== 'none', mode === 'repeat', 'the real picker refreshes preview before a saved-config reload');
       if (mode !== 'repeat') assert.equal(preview.fit, mode); else assert.match(preview.size, /^50%(?: auto)?$/);
-      await settingsSave(frame);
       if (entered) {
         await entered;
         assert.equal(kernel.config.get().ui.uikit.dark.bgFit, 'contain', 'an intercepted save has not committed yet');

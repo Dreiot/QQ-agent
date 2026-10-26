@@ -939,7 +939,7 @@ export function createOrchestrator({
   }
 
   return {
-    onIncoming, wake, scheduleWake, abortAll, pause, resume, drainBacklogAfterResume, stop, status,
+    onIncoming, wake, scheduleWake, abortAll, pause, resume, drainBacklogAfterResume, stop, status, isPaused:isPausedNow,
     retrySession, abortSession, startProactiveLoop, stopProactiveLoop, startReminderLoop, stopReminderLoop,
     storeConfigForChat,
     // 注入点（M1 装配 / M2 插件接线）

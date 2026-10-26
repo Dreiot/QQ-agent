@@ -154,7 +154,7 @@ export function createSendQueue({
     return next;
   }
 
-  async function chainSend(chatKey, segmentsList, { replyToMessageId = null, atUserId = null, fingerprints = [], signal } = {}) {
+  async function chainSend(chatKey, segmentsList, { replyToMessageId = null, atUserId = null, fingerprints = [], signal, beforeSend } = {}) {
     const sentResults = [];
     let skipped = 0;
     for (let i = 0; i < segmentsList.length; i++) {
@@ -169,6 +169,7 @@ export function createSendQueue({
         // 点名仅附在本批第一条实际发出的消息上，前面的重复条目可以被跳过。
         if (atUserId && sentResults.length === 0 && !segs.some((s) => s.type === 'at')) segs = [...segs, { type: 'at', id: String(atUserId) }];
         // 一次逻辑回复只在第一条实际发出的消息上引用；重复内容跳过后仍以首个成功项为准。
+        if(beforeSend)await beforeSend();checkAbort(signal);
         res = await transport.send(chatKey, segs, { replyToMessageId: sentResults.length === 0 ? replyToMessageId : null, atUserId, signal });
       } catch (err) {
         // 部分失败：failed[] 带 index+原文+错误（模型能知道哪条失败）

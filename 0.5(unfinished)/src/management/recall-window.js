@@ -1,0 +1,20 @@
+// Observe only messages delivered by the active transport. No message content
+// is retained: IDs and timestamps are sufficient to delimit the window.
+export async function recallMessageWindow({run,node,startTime,window,waiters,guard,at,member,transport,trace,ledger=new Map()}){
+  const start=startTime*1000,end=start+node.config.seconds*1000,seen=new Set();let recalled=0,failed=0,queued=0,tail=Promise.resolve(),fatal=null;
+  if(!run.dry&&window.hasLossSince?.(run.group,start))throw Error('时间窗消息已超出观察缓存，无法保证完整撤回');
+  if(start>at(run)+2000)throw Error('窗口起点晚于当前时间，请检查消息发送时间');
+  async function remove(item){guard(run);if(!['owner','admin'].includes((await member(run,run.self))?.role))throw Error('机器人已失去管理权限，撤回窗口已停止');guard(run);
+    if(run.dry){const failure=(run.scenario.recallFailures??[]).map(String).includes(item.mid);if(failure){failed++;trace(run,node,'skipped',`消息 ${item.mid} 模拟撤回失败`);}else{run.record.actions.push({action:'recall',messageId:item.mid,at:Math.max(run.startedAt,item.receivedAt??run.startedAt),groupId:run.group});recalled++;}return;}
+    try{const key=run.group+':'+item.mid,old=ledger.get(key);let shared=old&&old.expires>at(run)?old:null;if(shared){try{await shared.promise;}catch{guard(run);shared=null;}}if(!shared){const promise=transport.actions.moderateGroup(run.group,{action:'recall_window_message',messageId:item.mid,observedGroupId:run.group},{signal:run.controller.signal,current:()=>{guard(run);return true;}}),entry={promise,expires:at(run)+3600000};ledger.delete(key);ledger.set(key,entry);if(ledger.size>10000)ledger.delete(ledger.keys().next().value);try{await promise;}catch(error){if(ledger.get(key)===entry)ledger.delete(key);throw error;}}guard(run);recalled++;}
+    catch(error){guard(run);failed++;trace(run,node,'skipped',`消息 ${item.mid} 撤回失败：${String(error.message).slice(0,180)}`);}
+  }
+  function enqueue(item){if(!Number.isFinite(item.sentAt)||item.sentAt<start||item.sentAt>=end)return;if(!item.mid||!/^-?[1-9]\d*$/.test(String(item.mid))||!Number.isSafeInteger(Number(item.mid))){failed++;return;}const id=String(item.mid);if(seen.has(id))return;seen.add(id);if(++queued>2000){fatal=Error('窗口消息超过 2000 条，无法保证完整处理');run.controller.abort();return;}tail=tail.then(async()=>{if(!fatal)await remove({...item,mid:id});}).catch(error=>{fatal=error;run.controller.abort();});}
+  const rawItem=(raw,receivedAt)=>({mid:raw.message_id,sentAt:Number.isFinite(raw.time)?raw.time*1000:undefined,receivedAt});
+  if(run.dry){enqueue({...rawItem(run.event,run.startedAt),sentAt:Number.isFinite(run.event.time)?run.event.time*1000:run.startedAt});let index=0;for(const item of [...(run.scenario.history??[]),...(run.scenario.messages??[])]){index++;if(item.groupId&&String(item.groupId)!==run.group)continue;enqueue({mid:item.messageId??100000+index,sentAt:Number.isFinite(item.time)?item.time*1000:run.startedAt+Number(item.afterSeconds)*1000,receivedAt:run.startedAt+Number(item.afterSeconds)*1000});}run.elapsed=Math.max(run.elapsed,(end-run.startedAt)/1000);await tail;}
+  else{const signal=run.controller.signal;let timer;const waiter={run,accept(event){if(['message','message_observed'].includes(event.type)&&event.kind==='group'&&String(event.id)===run.group){if(!Number.isFinite(event.event?.time)){failed++;return;}enqueue(rawItem(event.event,at(run)));}}};
+    try{waiters.add(waiter);for(const item of window.recent(run.group,0)){if(!Number.isFinite(item.sentAt)&&item.at>=start&&item.at<end)failed++;else enqueue({...item,receivedAt:item.at});}enqueue(rawItem(run.event,run.startedAt));await new Promise((resolve,reject)=>{const abort=()=>{clearTimeout(timer);reject(fatal??Object.assign(Error('撤回窗口已停止'),{name:'AbortError'}));};timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},Math.max(0,end-at(run)));signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();});}
+    finally{clearTimeout(timer);waiters.delete(waiter);await tail;}
+  }
+  if(fatal)throw fatal;guard(run);const detail=`已撤回 ${recalled} 条，失败 ${failed} 条；窗口 ${node.config.seconds} 秒`;if(failed){run.record.warnings??=[];run.record.warnings.push(detail);}return {recalled,failed,detail};
+}

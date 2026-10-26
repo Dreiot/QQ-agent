@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {modelUiFixture} from './model-ui-fixture.mjs';
+const evidence=path.resolve('.qa-local/rules-panel');fs.mkdirSync(evidence,{recursive:true});
+const old={id:'existing-rule',name:'已有规则',enabled:false,groups:['12345'],cooldownSeconds:0,nodes:[{id:'start',type:'message',config:{},next:'record'},{id:'record',type:'note',config:{text:'保留内容'},next:'$end'}]};
+const transport={id:'ordinary-rule-fixture',selfId:'111',start(){},stop(){},status:()=>({connected:true}),actions:{listGroups:async()=>[{id:'12345',name:'普通成员群'}],listFriends:async()=>[{id:'77777',name:'私聊好友'}],getModerationMember:async(_g,user)=>({userId:user,role:'member'})}};
+const f=await modelUiFixture({transport,config:{management:{version:1,rules:[old]}}}),{page,frame}=f;
+const until=async(fn,msg)=>{const end=Date.now()+12000;while(!await fn()){if(Date.now()>end)throw Error(msg);await new Promise(r=>setTimeout(r,30));}};
+try{
+  assert.equal(await frame.locator('#settings-sidebar [data-target=management]').count(),0);
+  const before=f.disk();await page.locator('#nav button[data-panel=rules]').click();await frame.locator('.management-toolbar').waitFor();
+  assert.equal(await page.locator('#workspace-title').textContent(),'规则');assert.match(page.url(),/panel=rules/);assert.equal(await frame.getByLabel('选择规则',{exact:true}).inputValue(),old.id);
+  assert.deepEqual(f.disk().management.rules,before.management.rules,'opening must preserve existing data');
+  assert.equal(await frame.getByRole('button',{name:'更多',exact:true}).count(),0);for(const name of ['复制规则','导出','删除规则'])assert.ok(await frame.getByRole('button',{name,exact:true}).isVisible());
+  const titleBox=await frame.locator('h2').boundingBox(),editorBox=await frame.locator('#rules-editor').boundingBox();assert.ok(Math.abs(titleBox.x-editorBox.x)<2,'title aligns with editor');
+  await frame.getByRole('button',{name:'选择适用会话',exact:true}).click();const scope=frame.locator('dialog.rules-scope-dialog'),group=scope.locator('[data-choice-id="12345"]').getByRole('checkbox');await group.waitFor();assert.equal(await group.isEnabled(),true);await group.uncheck();
+  await scope.getByRole('tab',{name:/私聊/}).click();await scope.locator('[data-choice-id="77777"]').getByRole('checkbox').check();await scope.getByRole('button',{name:'完成',exact:true}).click();await until(()=>f.disk().management.rules[0].private?.[0]==='77777','private selection save');assert.deepEqual(f.disk().management.rules[0].groups,[]);
+  assert.ok(await frame.getByLabel('规则名称',{exact:true}).isVisible());assert.ok(await frame.getByLabel('同一用户触发冷却（秒）',{exact:true}).isVisible());
+  await frame.getByLabel('规则名称',{exact:true}).fill('普通成员的自动规则');await frame.getByLabel('规则名称',{exact:true}).press('Tab');
+  await until(()=>f.disk().management.rules[0].name==='普通成员的自动规则','rule save');await frame.locator('.settings-save-toast[data-state=saved]').waitFor();
+  assert.ok(f.writes.some(w=>w.path==='/api/management'));assert.ok(!f.writes.some(w=>w.path==='/api/config'&&w.body?.management));assert.deepEqual(f.disk().api,before.api,'rule writes must not replace model config');
+  await frame.getByRole('button',{name:'试运行',exact:true}).click();const modal=frame.locator('dialog.management-dialog');await modal.getByLabel('模拟机器人身份',{exact:true}).selectOption('member');await modal.getByRole('button',{name:'运行模拟',exact:true}).click();
+  await until(async()=>await modal.locator('.management-simulation-result').textContent().then(t=>t.includes('记录说明 · ✓')),'member rule simulation');assert.ok(!await modal.locator('.management-simulation-result').textContent().then(t=>t.includes('权限不足')));await modal.getByRole('button',{name:'关闭',exact:true}).click();
+  await frame.getByLabel('规则名称',{exact:true}).fill('离开时保存');await frame.getByLabel('规则名称',{exact:true}).press('Tab');await page.locator('#nav button[data-panel=settings]').click();await frame.locator('#settings-sidebar').waitFor();assert.equal(f.disk().management.rules[0].name,'离开时保存');
+  await page.locator('#nav button[data-panel=rules]').click();await frame.locator('.management-toolbar').waitFor();assert.equal(await frame.getByLabel('规则名称',{exact:true}).inputValue(),'离开时保存');
+  const invalid=await f.request('POST','/api/management',{rules:[],server:{token:'must-not-write'}});assert.equal(invalid.status,400);assert.equal(f.disk().management.rules.length,1);
+  const groups=await f.request('GET','/api/management/groups');assert.equal(groups.data.groups[0].allowed,true);assert.equal(groups.data.groups[0].role,'member');
+  let rejectSave=true;await page.route('**/api/management',route=>rejectSave&&route.request().method()==='POST'?route.fulfill({status:503,json:{error:'合成规则保存失败'}}):route.continue());
+  await frame.getByLabel('规则名称',{exact:true}).fill('失败后保留');await frame.getByLabel('规则名称',{exact:true}).press('Tab');await frame.locator('.settings-save-toast[data-state=error]').waitFor();
+  await page.locator('#nav button[data-panel=settings]').click();await page.locator('#toast-region').getByText(/合成规则保存失败/).waitFor();assert.equal(await frame.getByLabel('规则名称',{exact:true}).inputValue(),'失败后保留');assert.equal(f.disk().management.rules[0].name,'离开时保存');
+  rejectSave=false;await frame.getByRole('button',{name:'重试保存',exact:true}).click();await until(()=>f.disk().management.rules[0].name==='失败后保留','retry must preserve and commit draft');
+  await page.reload();await frame.locator('.management-toolbar').waitFor();assert.equal(f.disk().management.rules[0].nodes[1].config.text,'保留内容');await page.screenshot({path:path.join(evidence,'desktop.png')});
+  await page.setViewportSize({width:760,height:900});assert.ok(await frame.locator('body').evaluate(n=>n.scrollWidth<=n.clientWidth+1));await page.screenshot({path:path.join(evidence,'narrow.png')});assert.deepEqual(f.errors,[]);assert.equal(f.outbound(),0);
+  console.log('PASS rules panel: independent navigation, no settings entry, preserved rules, member groups/execution, bounded save, saved toast, leave flush, failed-save retention/retry, refresh and narrow layout');
+}finally{await f.close();}

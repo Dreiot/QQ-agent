@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mergeProtocolConnection } from './adapters.js';
+import { isDeepStrictEqual } from 'node:util';
 
 const NAP = '/api/QQLogin/';
 const SNOW_STATUSES = new Set(['available', 'loading', 'connecting', 'loaded', 'online', 'disconnected', 'error']);
@@ -107,8 +108,8 @@ export function normalizeSnowProcesses(list) {
     const snapshotId = accountId(item.account?.uin);
     const id = item.loggedIn === true ? accountId(item.uin) : snapshotId || accountId(item.uin);
     const status = SNOW_STATUSES.has(item.status) ? item.status : 'error';
-    const selectable = !item.injected && !item.connected && ['available', 'disconnected', 'error'].includes(status);
-    return { pid: item.pid, accountId: id, nickname: snapshotId && snapshotId === id ? cleanText(item.account?.nickname) : '', status, selectable,
+    const selectable = !item.connected && ['available', 'disconnected', 'error'].includes(status);
+    return { pid: item.pid, accountId: id, nickname: snapshotId && snapshotId === id ? cleanText(item.account?.nickname) : '', status, selectable, injected: item.injected === true,
       reason: selectable ? '' : ['loading', 'connecting'].includes(status) ? '正在接入，请稍候。' : '此 QQ 进程已接入。' };
   });
 }
@@ -189,12 +190,25 @@ export async function injectNativeProcess({ request, credential, pid, expectedAc
   if (expectedAccountId !== undefined && process.accountId !== expectedAccountId) {
     throw new NativeLoginError('此 QQ 进程的登录账号已变化，请刷新列表后重新选择。');
   }
-  const result = await snowCall(request, `/api/processes/${pid}/load`, credential, { method: 'POST', timeoutMs: 30000 });
+  // An injected DLL survives a console restart. Reconcile its pipe instead of injecting twice.
+  const result = await snowCall(request, `/api/processes/${pid}/${process.injected ? 'refresh' : 'load'}`, credential, { method: 'POST', timeoutMs: 30000 });
   if (result?.success !== true) throw new NativeLoginError('未能接入所选 QQ 进程，请检查桌面 QQ 状态及运行权限。');
 }
 
 /** Preserve the account's complete native snapshot and merge only QQ-Agent's named endpoints. */
-export async function prepareSnowConnection({ request, credential, accountId: selectedAccount, httpPort, wsPort, token }) {
+export function snowConnection(document) {
+  const owned = (key, name) => document?.networks?.[key]?.filter?.(row => row?.name === name);
+  const http = owned('httpServers', 'qq-agent-http'), ws = owned('wsServers', 'qq-agent-ws');
+  if (http?.length !== 1 || ws?.length !== 1) return null;
+  const [h] = http, [w] = ws;
+  // SnowLuma 2.2 omits the legacy enabled field; an entry in these arrays is active.
+  if (![h, w].every(row => (row.enabled === undefined || row.enabled === true) && row.host === '127.0.0.1' && row.path === '/' && row.messageFormat === 'array' && row.reportSelfMessage === false
+      && Number.isInteger(row.port) && row.port > 0 && row.port < 65536) || h.port === w.port || w.role !== 'Universal'
+      || typeof h.accessToken !== 'string' || !h.accessToken || h.accessToken.length > 4096 || /[\x00-\x20\x7f]/.test(h.accessToken) || w.accessToken !== h.accessToken) return null;
+  return { httpPort: h.port, wsPort: w.port, token: h.accessToken };
+}
+
+export async function prepareSnowConnection({ request, credential, accountId: selectedAccount, httpPort, wsPort, token, reuseExisting = false, verifySaved = false }) {
   if (typeof selectedAccount !== 'string' || !/^[0-9]{5,10}$/.test(selectedAccount)) {
     throw new NativeLoginError('请先在桌面 QQ 登录所选账号，再准备连接。');
   }
@@ -203,17 +217,45 @@ export async function prepareSnowConnection({ request, credential, accountId: se
   if (!snapshot?.config || typeof snapshot.config !== 'object' || Array.isArray(snapshot.config)) {
     throw new NativeLoginError('暂时无法读取此 QQ 账号的连接配置，未修改配置。');
   }
+  const existing = reuseExisting && snowConnection(snapshot.config);
+  if (existing) return existing;
   let config;
   try {
     config = mergeProtocolConnection(snapshot.config, { provider: 'snowluma', httpPort, wsPort, token });
   } catch {
     throw new NativeLoginError('此 QQ 账号的连接配置暂不可用，未修改配置。');
   }
+  const own = value => ['httpServers', 'wsServers'].map((key, index) => (value?.networks?.[key] || []).filter(row => row?.name === ['qq-agent-http', 'qq-agent-ws'][index]).map(row=>{
+    const normalized={...row};if(normalized.enabled===true)delete normalized.enabled;if(key==='httpServers'&&normalized.enableWebSocket===undefined)normalized.enableWebSocket=false;return normalized;
+  }));
+  const rollback = async () => {
+    const current = await snowCall(request, path, credential);
+    if(!current?.config||typeof current.config!=='object'||Array.isArray(current.config))throw new NativeLoginError('无法核对原连接配置，请在协议端检查。');
+    if (isDeepStrictEqual(own(current?.config), own(snapshot.config))) return;
+    if (!current?.config || !isDeepStrictEqual(own(current.config), own(config))) throw new NativeLoginError('连接配置已被其他操作修改，请在协议端检查；未覆盖新配置。');
+    const restored = { ...current.config, networks: { ...current.config.networks } };
+    for (const [key, name] of [['httpServers', 'qq-agent-http'], ['wsServers', 'qq-agent-ws']]) {
+      restored.networks[key] = [...current.config.networks[key].filter(row => row?.name !== name), ...(snapshot.config.networks?.[key] || []).filter(row => row?.name === name)];
+    }
+    const result = await snowCall(request, path, credential, { method: 'POST', body: restored, timeoutMs: 30000 });
+    if (result?.success !== true || result.saved !== true || result.applied === false && result.online === true || (Array.isArray(result.errors)?result.errors.length:Object.keys(result.errors||{}).length)) throw new NativeLoginError('未能恢复原连接配置，请在协议端检查。');
+    const verified=await snowCall(request,path,credential);if(!isDeepStrictEqual(own(verified?.config),own(restored)))throw new NativeLoginError('原连接配置未能保存，请在协议端检查。');
+  };
+  try {
   const result = await snowCall(request, path, credential, { method: 'POST', body: config, timeoutMs: 30000 });
   const errors = result?.errors;
   const hasErrors = Array.isArray(errors) ? errors.length > 0 : errors && typeof errors === 'object'
     ? Object.keys(errors).length > 0 : Boolean(errors);
   if (result?.success !== true || result.saved !== true || hasErrors || (result.applied === false && result.online === true)) {
     throw new NativeLoginError('所选 QQ 账号的连接配置未完整生效，请在协议端页面检查后重试。');
+  }
+  if (verifySaved) {
+    const saved = await snowCall(request, path, credential);
+    if (!isDeepStrictEqual(snowConnection(saved?.config), { httpPort, wsPort, token })) throw new NativeLoginError('协议端保存的连接配置与本次设置不一致，未连接此账号。');
+  }
+  return { httpPort, wsPort, token, rollback };
+  } catch (error) {
+    if (verifySaved) { try { await rollback(); } catch { throw new NativeLoginError('连接配置未完整生效，且未能恢复原配置，请打开协议端检查。'); } }
+    throw error;
   }
 }

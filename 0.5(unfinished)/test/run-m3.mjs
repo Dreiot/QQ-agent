@@ -120,6 +120,10 @@ files.push('account-scope-browser-test.mjs');
 files.push('account-navigation-browser-test.mjs','panel-content-ready-test.mjs','account-transition-browser-test.mjs');
 files.push('account-metadata-stream-test.mjs','account-reset-quiescence-test.mjs','account-control-rpc-test.mjs');
 files.push('extension-online-update-test.mjs','extension-online-update-ui-test.mjs');
+files.push('visual-appearance-editor-test.mjs');
+files.push('appearance-presets-test.mjs');
+files.push('background-selection-test.mjs');
+files.push('background-viewport-test.mjs');
 let pass=0;let fail=0;
 files.push('291-composition-lifecycle-regression-test.mjs', '292-theme-description-test.mjs');
 for(const file of files){console.log(`\n=== ${file} ===`);const result=spawnSync(process.execPath,[path.join(here,file)],{stdio:'inherit',timeout:240000});if(result.status===0)pass++;else {fail++;console.error(`FAILED ${file}: status=${result.status} signal=${result.signal||'none'} ${result.error?.message||''}`);}}

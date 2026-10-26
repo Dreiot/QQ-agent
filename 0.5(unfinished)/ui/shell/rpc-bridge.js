@@ -6,7 +6,7 @@ import {currentAccountScope,normalizeAccountId} from '../panels/account-scope.js
 import {accountNavigationUrl} from './account-navigation.js';
 
 const RPC={INVALID:-32600,NOT_FOUND:-32601,FORBIDDEN:-32003,INTERNAL:-32603};
-const RPC_METHODS=new Set(['settings.saveState','settings.save','api.request','ctx.call','ctx.getConfig','ctx.notify','ui.confirm','ui.notify','ui.openExternal','ui.destructiveProgress','console.manageToken','console.update','ui.captchaDiagnostics','community.authenticateMarket','community.cancelMarketAuthentication','community.publishMarket','community.cancelMarketPublish','community.publishQuote','community.cancelQuotePublish','community.publishFeedback','community.cancelFeedbackPublish','theme.apply','panel.ready','panel.contentReady','panel.flushed']);
+const RPC_METHODS=new Set(['settings.saveState','settings.save','api.request','ctx.call','ctx.getConfig','ctx.notify','ui.confirm','ui.notify','ui.openExternal','ui.destructiveProgress','console.manageToken','console.update','ui.captchaDiagnostics','community.authenticateMarket','community.cancelMarketAuthentication','community.publishMarket','community.cancelMarketPublish','community.publishQuote','community.cancelQuotePublish','community.publishFeedback','community.cancelFeedbackPublish','theme.apply','appearance.open','appearance.select','panel.ready','panel.contentReady','panel.flushed']);
 const PROTOCOL_LOGIN_POSTS=new Set(['connect','refresh','inject','close','visibility'].map(action=>'/api/local-protocols/login/'+action));
 const validProtocolSession=value=>typeof value==='string'&&value.length>0&&value.length<=256;
 const EXTERNAL_TARGETS_BY_PANEL=new Map([
@@ -30,6 +30,7 @@ export class RpcBridge {
     this.onAuthenticateMarket=onAuthenticateMarket;this.authenticationController=null;
     this.onDestructiveProgress=onDestructiveProgress;this.destructiveProgressActive=false;this.leaving=false;
     this.protocolLoginSession=null;this.protocolLoginReleased=new Set();
+    this.backgroundUploads=new Set();
     this.nonce=crypto.randomUUID().replaceAll('-',''); this.controllers=new Set(); this.closed=false; this.ready=false;this.flushed=false; this.flushPromise=null; this.flushResolve=null;this.flushReject=null;this.flushTimer=null;this.flushId=null;this.viewState=viewState;
     this.contentState=null;this.contentReadyPromise=new Promise(resolve=>{this.resolveContentReady=resolve;});
     this.settingsSave=createSettingsSaveLifecycle({api:this.api,manifest:this.manifest,notify:this.onNotify});
@@ -149,6 +150,12 @@ export class RpcBridge {
         return this.reply(message.id,await this.onOpenExternal(target));
       }catch(error){return this.fail(message.id,RPC.INTERNAL,error.message);}
     }
+    if(message.method==='appearance.open'||message.method==='appearance.select') {
+      if(this.manifest.kind!=='bundled'||message.method==='appearance.open'&&this.manifest.id!=='settings')return this.fail(message.id,RPC.FORBIDDEN,'此面板不能打开外观编辑器');
+      if(typeof this.onAppearance!=='function')return this.fail(message.id,RPC.INTERNAL,'外观编辑器尚未就绪');
+      try{return this.reply(message.id,await this.onAppearance(message.method,message.params,this.manifest.id));}
+      catch(error){return this.fail(message.id,RPC.INTERNAL,error.message);}
+    }
     if(message.method==='theme.apply') {
       if(this.manifest.kind!=='bundled')return this.fail(message.id,RPC.FORBIDDEN,'用户面板不能修改宿主主题');
       // bundled 面板请求宿主换肤：外观参数由 shell 校验后落地并广播（面板不直接碰宿主 DOM）。
@@ -181,6 +188,13 @@ export class RpcBridge {
     const timer=setTimeout(()=>controller.abort(new DOMException('请求超时','TimeoutError')),timeout);
     try {
       const result=await (accountControl?this.controlApi:this.api).request(method,path,message.params?.body,message.params?.query,{signal:controller.signal,timeout});
+      if(this.manifest.id==='settings'){
+        if(method==='POST'&&path==='/api/uikit/background/uploads'&&/^[a-f0-9]{32}$/.test(result?.id||'')){
+          if(this.closed||this.leaving)this.releaseBackgroundUpload(result.id);else this.backgroundUploads.add(result.id);
+        }
+        const completed=/^\/api\/uikit\/background\/uploads\/([a-f0-9]{32})(?:\/complete)?$/.exec(path);
+        if(completed&&(method==='DELETE'||method==='POST'&&path.endsWith('/complete')))this.backgroundUploads.delete(completed[1]);
+      }
       if(protocolLogin){
         if(path==='/api/local-protocols/login/close'){
           if(message.params?.body?.sessionId===this.protocolLoginSession)this.protocolLoginSession=null;
@@ -259,5 +273,9 @@ export class RpcBridge {
     try{void Promise.resolve(this.api.request('POST','/api/local-protocols/login/close',{sessionId})).catch(()=>{});}catch{}
   }
   beforeUnload(event){return this.settingsSave?.beforeUnload(event)??false;}
-  close() { if(this.closed)return;this.leaving=true;this.finishContentReady('closed');this.clearDestructiveProgress();this.finishFlush(null,true);this.viewState?.expire();this.settingsSave?.close();this.closed=true;this.releaseProtocolLogin(this.protocolLoginSession);this.protocolLoginSession=null;window.removeEventListener('message',this.listener);for(const controller of this.controllers)controller.abort();this.controllers.clear(); }
+  releaseBackgroundUpload(id){
+    if(!/^[a-f0-9]{32}$/.test(id||''))return;this.backgroundUploads.delete(id);
+    try{void Promise.resolve(this.api.request('DELETE',`/api/uikit/background/uploads/${id}`)).catch(()=>{});}catch{}
+  }
+  close() { if(this.closed)return;this.leaving=true;this.finishContentReady('closed');this.clearDestructiveProgress();this.finishFlush(null,true);this.viewState?.expire();this.settingsSave?.close();this.closed=true;this.releaseProtocolLogin(this.protocolLoginSession);this.protocolLoginSession=null;for(const id of [...this.backgroundUploads])this.releaseBackgroundUpload(id);window.removeEventListener('message',this.listener);for(const controller of this.controllers)controller.abort();this.controllers.clear(); }
 }

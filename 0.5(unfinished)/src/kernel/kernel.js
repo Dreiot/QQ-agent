@@ -39,7 +39,7 @@ export function createKernel({
     'runtime.capability': 'close', 'runtime.permissions': 'close', 'runtime.scheduler': 'stop',
     'runtime.plugins': 'stopAll', 'runtime.services': 'stop', 'runtime.http': 'close',
     'data.sessions': 'stop', 'core.orchestrator': 'stop', 'console.sse': 'close', 'runtime.localProtocols': 'close', 'runtime.protocolLogin': 'close',
-    'runtime.accounts': 'close', 'runtime.accountGateway': 'close',
+    'runtime.accounts': 'close', 'runtime.accountGateway': 'close', 'core.management':'close',
   };
   const release = (name, ...args) => resourceDisposers.get(name)?.(...args);
   const construct = (name, options) => {
@@ -95,6 +95,7 @@ export function createKernel({
   const cfg = () => config.get();
   const localProtocols = construct('runtime.localProtocols', { appRoot, dataDir, config, bus, log, env });
   const protocolLogin = construct('runtime.protocolLogin', { config, localProtocols, bus, fetchImpl,
+    getAccounts:async()=>accounts?accounts.snapshot():{accounts:[]},
     onVerifiedAccount:async input=>{
       if(!accounts)return null;
       const workspace=await accounts.registerConnection(input);
@@ -157,7 +158,7 @@ export function createKernel({
     bus.emit('transport.status', transportStatusSnapshot);
     bus.emit('onebot.status', transportStatusSnapshot);
   };
-  const actionFacade = serviceFacade(() => services?.get('transport.provider')?.actions, ['poke', 'recall', 'getChatInfo', 'getMembers', 'getGroupMemberInfo', 'getForward', 'getVideo', 'getFile', 'getRecord', 'getImage', 'listGroups', 'listFriends', 'getGroupMembers', 'getGroupName', 'getSelfMemberInfo', 'addCustomFace', 'modifyCustomFace', 'deleteCustomFace', 'fetchCustomFaces', 'fetchCustomFaceDetails'], { label: '协议动作' });
+  const actionFacade = serviceFacade(() => services?.get('transport.provider')?.actions, ['poke', 'recall', 'getChatInfo', 'getMembers', 'getGroupMemberInfo', 'getForward', 'getVideo', 'getFile', 'getRecord', 'getImage', 'listGroups', 'listFriends', 'getGroupMembers', 'getGroupName', 'getSelfMemberInfo', 'addCustomFace', 'modifyCustomFace', 'deleteCustomFace', 'fetchCustomFaces', 'fetchCustomFaceDetails','getModerationMember','getModerationMembers','moderateGroup'], { label: '协议动作' });
   const transport = serviceFacade(() => services?.get('transport.provider'), ['send', 'toPlatformSegments', 'reconnect'], { label: '传输', properties: ['id', 'selfId', 'selfNickname', 'segmentSupport', 'everConnected'] });
   const currentSelfId = () => transport.selfId === undefined ? selfId : transport.selfId;
   const transportView = Object.freeze({ ...transport, actions: actionFacade,
@@ -166,6 +167,7 @@ export function createKernel({
     status: () => services?.get('transport.provider')?.status?.() ?? transportStatusSnapshot,
   });
   const send = construct('core.send', { transport: transportView, store, log, cfg, bus, mediaReader: () => mediaReader });
+  const management=construct('core.management',{config,transport:transportView,send,dataDir,bus,isPaused:()=>orchestrator.isPaused?.()??orchestrator.status?.().paused??false,identityOf:()=>services?.token?.('transport.provider'),log});
   const pick = (target, names, properties = []) => serviceFacade(() => target, names, { properties });
   const memoryAccess = { ...pick(memory, ['append', 'remove', 'query', 'stats', 'markConsolidated', 'lastConsolidatedAt', 'replaceMember', 'removeMember', 'clearChat', 'listFiles']) };
   for (const method of ['append', 'remove', 'replaceMember', 'removeMember', 'clearChat']) {
@@ -378,6 +380,7 @@ export function createKernel({
   }
 
   function handleProviderEvent(event, source = {}) {
+    management.handleEvent(event,source);
     return components['core.events'](event, {
       ingest, orchestrator, cfg, config, store, bus, log, capability, components, composition, lifecycle,
       selfIdOf: currentSelfId, forwardMedia: forwardLinkedMedia,
@@ -434,7 +437,7 @@ export function createKernel({
       return settings?.saveLifecycle?.kind === 'settings-v1'
         ? { owner: settings.stateOwner, generation: settings.stateGeneration } : null;
     },
-    startedAt, version: VERSION, appId: APP_ID, dataDir, transport: transportView, profile, appRoot, extensionRoot, publicPrefix:env.QQ_AGENT_ACCOUNT_PREFIX||'', personaText, services, components, composition, lifecycle, localProtocols, protocolLogin,
+    startedAt, version: VERSION, appId: APP_ID, dataDir, transport: transportView, profile, appRoot, extensionRoot, publicPrefix:env.QQ_AGENT_ACCOUNT_PREFIX||'', personaText, services, components, composition, lifecycle, localProtocols, protocolLogin,management,
     resetData: async () => {
       try { return await resetCoordinator.request(); }
       finally { bus.emit('status', { reset: resetCoordinator.status() }); }
@@ -580,6 +583,7 @@ export function createKernel({
     await accounts?.snapshot();
     checkActive();
     await services.start();
+    management.start();
     checkActive();
     await localProtocols.start();
     checkActive();
@@ -601,6 +605,7 @@ export function createKernel({
   }
 
   function invalidateLifecycle() {
+    void release('core.management');
     lifecycleActive = false;
     lifecycleController?.abort(new Error('内核已停止'));
     lifecycle.cancel?.();
@@ -617,7 +622,7 @@ export function createKernel({
     // Child account data is inside dataDir. Stop its writers before reset can
     // back up that tree; HTTP and the instance lock survive to deliver the DTO.
     for (const action of [() => orchestrator.pause(), () => release('runtime.accountGateway'), () => release('runtime.accounts'),
-      () => release('runtime.protocolLogin'), () => release('runtime.localProtocols'),
+      () => release('runtime.protocolLogin'), () => release('runtime.localProtocols'), () => release('core.management'),
       () => release('runtime.services'), () => release('runtime.plugins'),
       () => release('core.orchestrator'), () => release('runtime.permissions', '重置前停止'), () => release('runtime.scheduler'),
       () => release('data.sessions'), () => lifecycle.close(), () => log.flush()]) {
@@ -637,6 +642,7 @@ export function createKernel({
       () => release('runtime.accounts'),
       () => release('runtime.protocolLogin'),
       () => release('runtime.localProtocols'),
+      () => release('core.management'),
       () => release('runtime.services'),
       () => release('runtime.plugins'),
       () => release('core.orchestrator'),
@@ -670,7 +676,7 @@ export function createKernel({
   return {
     VERSION, APP_ID, dataDir, profile, components, composition, lifecycle,
     log, bus, config, capability, permissions, registry, scheduler, storage, loader, httpServer,
-    store, memory, sessions, send, ingest, orchestrator, transport: transportView, services, localProtocols, protocolLogin, accounts,
+    store, memory, sessions, send, ingest, orchestrator, transport: transportView, services, localProtocols, protocolLogin, accounts,management,
     /** @deprecated 使用 transport；0.5.x 保留兼容 */
     get onebot() { return transportView; },
     start, stop,

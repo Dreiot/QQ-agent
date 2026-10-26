@@ -1,6 +1,8 @@
 import {PERSONALIZATION_FIELDS,PERSONALIZATION_GROUPS} from '../theme.js';
 import {createIcon} from '../icons.js';
 import {mountChoiceCards} from './choice-cards.js';
+import {mountFontPicker} from '../local-fonts.js';
+import {request} from '../panel-client.js';
 
 // Every editor writes through the current scheme's existing queue. There is no
 // parallel preferences store, and preview-only controls never call this module.
@@ -21,6 +23,9 @@ export function renderAppearanceControls({doc=document,effective,path,change}){
       const input=bind(doc.createElement('select'));for(const item of spec.options){const option=doc.createElement('option');option.value=String(item.value);option.textContent=item.label;input.append(option);}
       input.value=String(value);input.addEventListener('change',()=>{const option=spec.options.find(item=>String(item.value)===input.value);emit(option?.value??input.value);});box.append(input);
       const cards=mountChoiceCards(input);disposers.push(cards.dispose);sync=()=>{input.value=String(value);cards.refresh();};
+    }else if(spec.type==='font'){
+      const input=bind(doc.createElement('input'));input.value=value;
+      const picker=mountFontPicker({doc,input,request,onChange:next=>emit(next)});box.append(picker.element);disposers.push(picker.dispose);sync=()=>{input.value=value;};
     }else if(spec.type==='color'){
       const row=doc.createElement('div'),input=bind(doc.createElement('input')),auto=doc.createElement('button');row.className='personalization-color';input.type='color';auto.type='button';auto.textContent=spec.autoLabel||'自动';auto.setAttribute('role','switch');auto.setAttribute('aria-label',`${spec.label}自动`);
       const inherited=spec.key==='rail'?effective.bg:effective.accent;

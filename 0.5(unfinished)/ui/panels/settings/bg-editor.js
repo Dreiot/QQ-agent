@@ -1,26 +1,12 @@
 import {accountResourceUrl} from '../account-scope.js';
-// 背景图编辑器（16:9 范围选定 + 旋转）
-// ---------------------------------------------------------------------------
-// 需求（用户原话）：应用背景图之前应提供一个简单的编辑功能，
-// 只要「旋转」和「范围选定」，范围选定为 16:9。
-//
-// 设计取舍：
-//  - 范围选定 = 一个恒定 16:9 的取景框，在整页大小的图上拖动/缩放。
-//    输出两个百分比（bgOffsetX / bgOffsetY：选框中心相对整页的偏移）
-//    加选框相对宽度（bgZoom）。shell 把选中区域移到中心并按倒数放大。
-//  - 旋转用 bgRotate（度）。shell 里图片先 rotate 再按选框裁。
-//  - 预览台原图只旋转，尺寸不随选框改变；选中区域与 shell 的构图一致，
-//    避免"编辑器里好看、应用后不一样"。
-//
-// 契约：只写 5 个配置路径，不新增结构字段 —— 保持能被方案模型（theme.js）收纳。
-//   bgRotate / bgZoom / bgOffsetX / bgOffsetY / bgFit
-//
-// 注意：本模块只负责产出配置，不碰 DOM 之外的任何状态；由panel.js 传入回调。
+import {isVideoBackground,loopingBackgroundVideo} from '../background-media.js';
+// The media plane and selection share the host viewport's live aspect ratio.
+// Only normalized crop parameters are saved; resizing the window never writes
+// configuration, reuploads media or restarts a running video.
 
 import { normalizeBackgroundCrop, backgroundPaint, safeBgUrl } from '../theme.js';
 import { bindDestructiveAction } from '../destructive-action.js';
 
-const RATIO = 16 / 9;   // 范围选定的唯一比例
 const MIN_SCALE = 0.2;  // 选框最小占舞台比例，再小就没法看了
 const MAX_SCALE = 1;
 
@@ -40,12 +26,13 @@ function normalizeSrc(url) {
  * @param {object} options
  * @param {() => string} options.getImage   读当前背景图地址
  * @param {() => object} options.getValues 读当前 { bgRotate, bgZoom, bgOffsetX, bgOffsetY, bgFit }
+ * @param {() => {width:number,height:number}} options.getViewport 当前宿主窗口尺寸
  * @param {(patch: object) => void} options.onChange 值变化回调（写 form +推送主题）
  * @param {() => void} options.onUpload    触发文件选择
  * @param {() => void} options.onClear     清除背景图
  * @returns {{ element: HTMLElement, refresh: () => void }}
  */
-export function createBackgroundEditor({ getImage, getValues, onChange, onUpload, onClear }) {
+export function createBackgroundEditor({ getImage, getValues, onChange, onUpload, onClear,getViewport=()=>({width:window.innerWidth,height:window.innerHeight}) }) {
   const element = document.createElement('div');
   element.className = 'bg-editor';
 
@@ -57,6 +44,8 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
   img.className = 'bg-stage-img';
   img.alt = '';
   img.draggable = false;
+  const video=document.createElement('video');video.className='bg-stage-video';video.hidden=true;
+  const playback=loopingBackgroundVideo(video,{onError:message=>setUploadStatus(message,true)});
 
   // A tiled background needs its own paint layer; keep the img for decoding
   // and for cover/contain so animated formats retain native browser behavior.
@@ -67,7 +56,7 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
   const mask = document.createElement('div');
   mask.className = 'bg-stage-mask';
 
-  // 选框（16:9，位置与大小由 state 驱动）
+  // Selection geometry is normalized within the viewport-shaped media plane.
   const crop = document.createElement('div');
   crop.className = 'bg-crop';
   for (const corner of ['nw', 'ne', 'sw', 'se']) {
@@ -91,9 +80,9 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
   const emptyHint = document.createElement('div');
   emptyHint.className = 'bg-crop-size';
   emptyHint.style.cssText = 'position:static;display:block;text-align:center';
-  emptyHint.textContent = '尚未选择背景图';
+  emptyHint.textContent = '尚未选择背景';
 
-  stage.append(img, repeated, mask, crop, dial, emptyHint);
+  stage.append(img,video, repeated, mask, crop, dial, emptyHint);
 
   // ---- 参数栏 ----
   const panel = document.createElement('div');
@@ -162,7 +151,7 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
   const uploadBtn = document.createElement('button');
   uploadBtn.type = 'button';
   uploadBtn.className = 'primary';
-  uploadBtn.textContent = '选择图片';
+  uploadBtn.textContent = '选择图片或视频';
   uploadBtn.addEventListener('click', () => onUpload());
   const clearBtn = document.createElement('button');
   clearBtn.type = 'button';
@@ -170,13 +159,15 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
   const clearAction = bindDestructiveAction(clearBtn, {
     action: () => onClear(), target: () => stage, clicks: 2, key: () => getImage(),
     canActivate: () => Boolean(getImage()),
-    impact: '将清除当前方案的背景图设置，界面会恢复为纯色背景。',
+    impact: '将清除当前方案的背景设置，界面会恢复为纯色背景。',
   });
-  actions.append(uploadBtn, clearBtn);
+  const uploadStatus=document.createElement('p');uploadStatus.className='bg-upload-status field-hint';
+  uploadStatus.setAttribute('role','status');uploadStatus.setAttribute('aria-live','polite');uploadStatus.hidden=true;
+  actions.append(uploadBtn, clearBtn,uploadStatus);
 
   const hint = document.createElement('p');
   hint.className = 'bg-editor-hint';
-  hint.textContent = '拖动选框选范围、拖角改变大小、拖右上旋钮旋转。选区恒为16:9，选中区域会放大为背景；100%选择全图。';
+  hint.textContent = '取景比例跟随当前窗口。拖动选框移动取景，拖动四角缩放，右上角旋转；调整不会改变原文件。';
 
   panel.append(rotateRow.row, zoomRow.row, offsetXRow.row, offsetYRow.row, presets, actions, hint);
   element.append(stage, panel);
@@ -204,16 +195,23 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
   }
 
   function render() {
+    const viewport=getViewport(),ratio=viewport.width>0&&viewport.height>0?viewport.width/viewport.height:1;
+    stage.style.setProperty('--bg-stage-ratio',String(ratio));
     const url = normalizeSrc(getImage());
     const has = Boolean(url);
+    const isVideo=isVideoBackground(url);
     const paint = backgroundPaint(getValues().bgFit);
-    const tiled = paint.repeat === 'repeat';
-    if (has && img.getAttribute('src') !== url) img.src = url;
-    if (!has) img.removeAttribute('src');
-    img.style.display = has ? '' : 'none';
+    const tiled = !isVideo&&paint.repeat === 'repeat';
+    if (has&&!isVideo && img.getAttribute('src') !== url) img.src = url;
+    if (!has||isVideo) img.removeAttribute('src');
+    img.style.display = has&&!isVideo ? '' : 'none';
+    video.hidden=!isVideo;
+    if(isVideo&&video.getAttribute('src')!==url)video.src=url;
+    if(!isVideo&&video.getAttribute('src')){video.pause();video.removeAttribute('src');video.load();}
+    playback.sync();
     img.style.visibility = tiled ? 'hidden' : 'visible';
     repeated.style.display = has && tiled ? '' : 'none';
-    const tileUrl = safeBgUrl(url);
+    const tileUrl = isVideo?'':safeBgUrl(url);
     repeated.style.backgroundImage = tileUrl ? `url(${JSON.stringify(tileUrl)})` : 'none';
     repeated.style.backgroundRepeat = paint.repeat;
     repeated.style.backgroundSize = paint.size;
@@ -224,32 +222,23 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
     emptyHint.style.display = has ? 'none' : '';
     stage.classList.toggle('is-empty', !has);
 
-    // 选框几何：宽 = scale×100%，高由 16:9 锁定
+    // The same fraction of both axes keeps preview, mask and host in sync.
     const wPct = scale * 100;
-    const hPct = (scale * 100) / RATIO;
     crop.style.width = `${wPct}%`;
-    // 高度交给 aspect-ratio 锁 16:9。
-    // 不要手算 style.height：这里的百分比参照系是**父元素高度**，而不是宽度，
-    // 手算出来的 hPct 会让实际比例跑成 3.17（实测），比例交给 CSS 才精确。
-    crop.style.aspectRatio = String(RATIO);
-    // ⚠️ 垂直定位必须用像素，不能用百分比。
-    // CSS 里 top 的百分比参照**父元素高度**，而这里的 hPct 是"相对父宽度的百分比当量"。
-    // 两者参照系不同，混用会让选框垂直偏移（实测把手跑到框外 25px，拖角失效）。
-    // 选框高度 = 舞台宽 × wPct/RATIO，换成父高度百分比即可。
+    crop.style.height = `${wPct}%`;
+    crop.style.aspectRatio = String(ratio);
     const stageBox = stage.getBoundingClientRect();
-    const cropH = stage.clientWidth * (wPct / 100) / RATIO;
+    const cropH = stage.clientHeight * scale;
     crop.style.left = `${50 + offsetX - wPct / 2}%`;
-    crop.style.top = stageBox.height
-      ? `calc(${50 + offsetY}% - ${cropH / 2}px)`
-      : `${50 + offsetY - hPct / 2}%`;
+    crop.style.top = `${50 + offsetY - wPct / 2}%`;
 
-    // 遮罩镂空跟随选框：把暗色蒙版缩到选框区域，四周由 box-shadow spread 铺出去，
-    // 于是选框内透明、框外压暗。（同样的参照系问题：top 用像素，不用百分比）
+    // The mask uses exactly the selection's normalized rectangle.
     mask.style.inset = 'auto';
     mask.style.left = crop.style.left;
     mask.style.top = crop.style.top;
     mask.style.width = `${wPct}%`;
-    mask.style.aspectRatio = String(RATIO);
+    mask.style.height = `${wPct}%`;
+    mask.style.aspectRatio = String(ratio);
 
     // 选框独立缩放/移动；源图保持原尺寸，只旋转。
     stage.style.setProperty('--bg-stage-rotate', `${rotate}deg`);
@@ -257,11 +246,12 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
     stage.style.setProperty('--bg-stage-fit', getValues().bgFit === 'contain' ? 'contain' : 'cover');
     needle.style.setProperty('--bg-dial-angle', `${rotate}deg`);
     // 旋钮贴在选框右上角外侧，并夹在舞台内，别跑到框外看不见。
-    // 与选框同用像素纵坐标（参照系一致，见上面 crop.style.top 的注释）。
+    // Keep the dial inside the preview even for narrow or tall windows.
     dial.style.left = `calc(${Math.min(50 + offsetX + wPct / 2, 82)}% + 6px)`;
     dial.style.top = `calc(${Math.max(4, 50 + offsetY)}% - ${Math.min(cropH / 2, Math.max(0, stageBox.height * (50 + offsetY) / 100 - 6))}px)`;
 
-    cropSize.textContent = has ? `16:9 · ${Math.round(wPct)}% 宽` : '';
+    cropSize.textContent = has ? `跟随窗口 · ${Math.round(wPct)}%` : '';
+    cropSize.title=`当前窗口 ${Math.round(viewport.width)} × ${Math.round(viewport.height)}`;
 
     // 数值回显
     rotateValue.textContent = `${Math.round(rotate)}°`;
@@ -290,8 +280,8 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
   // 原因：面板跑在 sandbox=allow-scripts 的 opaque-origin iframe 里，
   // setPointerCapture 在跨文档场景不可靠——实测拖角时pointermove 不再送达，
   // 导致"拖角没反应"。改成"在 stage 上持续监听 + window 兜底收尾"更稳。
-  const startDrag = (mode) => {
-    dragging = { mode };
+  const startDrag = (mode,event) => {
+    const point=stagePoint(event);dragging = { mode,grabX:point.x-50-offsetX,grabY:point.y-50-offsetY };
     stage.classList.add('is-dragging');
     // 拖动期间禁用图片的原生拖拽，否则浏览器会拖走 <img>
     if (img.getAttribute('draggable') !== 'false') img.setAttribute('draggable', 'false');
@@ -299,20 +289,20 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
 
   crop.addEventListener('pointerdown', (event) => {
     if (event.target.dataset?.corner) return;   // 角把手单独处理
-    startDrag('move');
+    startDrag('move',event);
     event.preventDefault();
   });
 
   for (const handle of crop.querySelectorAll('.bg-crop-handle')) {
     handle.addEventListener('pointerdown', (event) => {
-      startDrag('resize');
+      startDrag('resize',event);
       event.preventDefault();
       event.stopPropagation();     // 别冒泡到 crop 的 move 分支
     });
   }
 
   dial.addEventListener('pointerdown', (event) => {
-    startDrag('rotate');
+    startDrag('rotate',event);
     event.preventDefault();
   });
 
@@ -320,28 +310,27 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
     if (!dragging) return;
     const p = stagePoint(event);
     if (dragging.mode === 'move') {
-      // 选框中心跟随指针，限制在舞台内（不让选框飘出画面）
-      offsetX = Math.min(50, Math.max(-50, p.x - 50));
-      offsetY = Math.min(50, Math.max(-50, p.y - 50));
+      // Preserve the grab point; normalizeBackgroundCrop keeps the frame inside.
+      offsetX = Math.min(50, Math.max(-50, p.x - 50-dragging.grabX));
+      offsetY = Math.min(50, Math.max(-50, p.y - 50-dragging.grabY));
       commit({ bgOffsetX: offsetX, bgOffsetY: offsetY });
       return;
     }
     if (dragging.mode === 'resize') {
-      // 以选框中心为锚点缩放，比例由 aspect-ratio 恒定 16:9
+      // Scale both axes around the selection center without changing its ratio.
       const centerXpct = 50 + offsetX;
       const centerYpct = 50 + offsetY;
       const wPct = Math.abs(p.x - centerXpct) * 2;
       const hPct = Math.abs(p.y - centerYpct) * 2;
       const byWidth = wPct / 100;
-      const rect = stage.getBoundingClientRect();
-      const byHeight = (hPct * rect.height * RATIO) / (rect.width * 100);
+      const byHeight = hPct / 100;
       scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(byWidth, byHeight)));
       commit({ bgZoom: scale });
       return;
     }
     if (dragging.mode === 'rotate') {
       // 以舞台中心为原点算角度
-      const deg = Math.atan2(p.x - 50, -(p.y - 50)) * (180 / Math.PI);
+      const deg = Math.atan2((p.x - 50)*stage.clientWidth, -(p.y - 50)*stage.clientHeight) * (180 / Math.PI);
       rotate = ((Math.round(deg) % 360) + 360) % 360;
       commit({ bgRotate: rotate });
     }
@@ -371,18 +360,22 @@ export function createBackgroundEditor({ getImage, getValues, onChange, onUpload
     syncFromValues();
     render();
   }
-  const onResize = () => { if (element.isConnected) render(); };
+  let resizeFrame=0;
+  const onResize = () => { if(resizeFrame)return;resizeFrame=window.requestAnimationFrame(()=>{resizeFrame=0;if(element.isConnected)render();}); };
   const resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(onResize) : null;
   resizeObserver?.observe(stage);
   window.addEventListener('resize', onResize);
   function dispose() {
+    playback.dispose();
     clearAction.dispose();
     endDrag();
     resizeObserver?.disconnect();
+    if(resizeFrame)window.cancelAnimationFrame(resizeFrame);
     window.removeEventListener('resize', onResize);
     window.removeEventListener('pointerup', endDrag);
     window.removeEventListener('pointercancel', endDrag);
   }
   refresh();
-  return { element, refresh, dispose };
+  function setUploadStatus(message,failed=false){uploadStatus.textContent=message;uploadStatus.hidden=!message;uploadStatus.classList.toggle('field-error',failed);}
+  return { element, refresh, dispose,setUploadStatus,resize:onResize };
 }
