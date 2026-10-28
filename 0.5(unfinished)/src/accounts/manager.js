@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { terminateOwnedProtocolProcess } from '../protocols/process-tree.js';
+import {createHostAppearanceSync} from './appearance.js';
 
 const WORKER = fileURLToPath(new URL('./worker.js', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -117,7 +118,7 @@ function identity(primary) {
   const candidate = status.selfId ?? status.userId ?? status.user_id ?? primary?.transport?.selfId;
   const accountId = QQ.test(String(candidate ?? '')) ? String(candidate) : '';
   return { accountId, nickname: clean(status.selfNickname ?? status.nickname ?? primary?.transport?.selfNickname),
-    connected: status.connected === true, paused: primary?.orchestrator?.status?.()?.paused === true,
+    connected: status.connected === true&&status.transportReady!==false&&!!accountId, paused: primary?.orchestrator?.status?.()?.paused === true,
     provider: status.provider ?? status.id ?? primary?.transport?.id ?? '' };
 }
 function connection(input) {
@@ -129,7 +130,7 @@ function connection(input) {
   }
   return { accountId: input.accountId, nickname: clean(input.nickname), provider: input.provider,
     onebot: { httpUrl: `http://127.0.0.1:${input.httpPort}`, wsUrl: `ws://127.0.0.1:${input.wsPort}`,
-      accessToken: input.token, httpAccessToken: input.token } };
+      accessToken: input.token, httpAccessToken: input.token,expectedSelfId:input.accountId } };
 }
 
 /** Each child owns its kernel and data. The public registry never stores endpoint credentials. */
@@ -140,6 +141,7 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
   const records = new Map(), runtimes = new Map(), queues = new Map(), removedAccounts = new Set();
   let initialized, registryError = '', closed = false, closing, registryQueue = Promise.resolve(), revision = 0, primaryAccount = null, primaryMismatch = false;
   let primaryWanted = true, primaryTransition = '', primaryConnectionError = '';
+  const appearanceSync=typeof config.update==='function'?createHostAppearanceSync({config,broadcast:shared=>{bus?.emit?.('status',{configUpdated:true});for(const runtime of runtimes.values())if(alive(runtime.child))void bind(runtime.child,{type:'account.appearance',generation:runtime.generation,shared}).catch(()=>{});}}):null;
   const emit = (id, status) => { try { bus?.emit?.('accounts', { revision: ++revision, id, status }); } catch {} };
   const failed = id => { const runtime = runtimes.get(id) || { id }; if (!(runtime.status === 'running' && alive(runtime.child) && runtime.port)) runtime.status = 'error'; runtime.error ||= '此账号工作区未能完成操作，请检查数据目录和实例状态。'; runtimes.set(id, runtime); emit(id, runtime.status); };
   const serial = (id, work) => { const pending = (queues.get(id) || Promise.resolve()).catch(() => {}).then(work); queues.set(id, pending); pending.finally(() => { if (queues.get(id) === pending) queues.delete(id); }).catch(() => {}); return pending; };
@@ -168,6 +170,11 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
         for(const record of records.values())if(removedAccounts.has(record.accountId))record.wanted=false;
         if(primaryAccount&&removedAccounts.has(primaryAccount.accountId))primaryWanted=false;
       } catch { registryError = '账号工作区清单无效，已保留原文件。'; }
+      if(appearanceSync){
+        let seed;
+        if(!registryError&&!primaryAccount&&!config.get().ui?.sharedAppearance){const first=[...records.values()].find(record=>record.wanted&&!removedAccounts.has(record.accountId));if(first)try{const dirs=await locations(first.id),saved=await regularJson(dirs.file);seed=saved?.ui?.uikit;}catch{/* Invalid account data remains untouched and is diagnosed by its own start. */}}
+        appearanceSync.get(seed);
+      }
       // snapshot() is awaited by the kernel before services.start(), so an
       // explicitly disconnected primary never opens a socket during startup.
       if (!primaryWanted && !registryError) {
@@ -242,7 +249,7 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
     const dirs = await locations(id); await unlocked(dirs.dataDir); const saved = await regularJson(dirs.file);
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw fail('此账号尚未保存连接配置。', 409);
     const token = crypto.randomBytes(32).toString('hex'), generation = crypto.randomUUID();
-    const runtime = { id, generation, token, port: null, status: 'starting', connected: false, paused: true, error: '', child: null, requests: new Map(), transport: {} };
+    const runtime = { id, generation,connectionRevision:generation, token, port: null, status: 'starting', connected: false, paused: true, error: '', child: null, requests: new Map(), transport: {} };
     runtimes.set(id, runtime); emit(id, 'starting');
     let readyResolve, readyReject, exitResolve;
     const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
@@ -267,8 +274,12 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
         } else if (message.type === 'account.credential' && typeof message.token === 'string' && /^[A-Za-z0-9_-]{16,4096}$/.test(message.token)) {
           runtime.token = message.token; runtime.generation = crypto.randomUUID();
           void bind(child, { type: 'account.generation', generation: runtime.generation }).catch(() => {}); emit(id, 'credentials');
+        } else if (message.type === 'account.appearance' && UUID.test(message.requestId||'')) {
+          try{const shared=appearanceSync?.commit(message.delta);void bind(child,{type:'account.appearance',generation:runtime.generation,requestId:message.requestId,ok:true,shared}).catch(()=>{});}
+          catch{void bind(child,{type:'account.appearance',generation:runtime.generation,requestId:message.requestId,ok:false}).catch(()=>{});}
         } else if (message.type === 'account.status') {
-          runtime.connected = message.connected === true; runtime.paused = message.paused !== false;
+          if(message.connectionRevision!==undefined&&message.connectionRevision!==runtime.connectionRevision)return;
+          runtime.connected = message.connected === true&&message.transportReady!==false; runtime.paused = message.paused !== false;
           runtime.transport = { selfId: QQ.test(String(message.accountId || '')) ? String(message.accountId) : '', nickname: clean(message.nickname) };
           if (runtime.connected && runtime.transport.selfId !== record.accountId) { runtime.connected = false; runtime.error = '协议端当前账号与此工作区不一致。'; }
           else runtime.error = '';
@@ -287,8 +298,8 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
         readyReject(fail(runtime.error || '账号工作进程已退出。', 502)); exitResolve(); emit(id, runtime.status);
       });
       timer = setTimeout(() => readyReject(fail('账号工作进程启动超时。', 504)), startTimeoutMs); timer.unref?.();
-      await bind(child, { type: 'account.initialize', generation, workspaceId: id, accountId: record.accountId, appRoot: path.resolve(appRoot),
-        dataDir: dirs.dataDir, extensionRoot: dirs.extensionRoot, cacheRoot: dirs.cacheRoot, serverToken: token });
+      await bind(child, { type: 'account.initialize', generation,connectionRevision:runtime.connectionRevision, workspaceId: id, accountId: record.accountId, appRoot: path.resolve(appRoot),
+        dataDir: dirs.dataDir, extensionRoot: dirs.extensionRoot, cacheRoot: dirs.cacheRoot, serverToken: token,sharedAppearance:appearanceSync?.get() });
       await ready; if (closed) throw fail('账号工作区管理已停止。', 409);
       return { workspaceId: id };
     } catch (error) {
@@ -323,7 +334,7 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
     });
     return serial(record.id, async () => {
       await usable();if(removedAccounts.has(record.accountId))throw fail('账号已移除，请重新选择账号接入。',409);const runtime = runtimes.get(record.id);
-      if (runtime?.status === 'running' && alive(runtime.child)) { await request(runtime, 'account.configure', { onebot: selected.onebot }); return { workspaceId: record.id }; }
+      if (runtime?.status === 'running' && alive(runtime.child)) {runtime.connected=false;runtime.connectionRevision=crypto.randomUUID();emit(record.id,'configuring');await request(runtime, 'account.configure', { onebot: selected.onebot,connectionRevision:runtime.connectionRevision }); return { workspaceId: record.id }; }
       const dirs = await locations(record.id); await unlocked(dirs.dataDir); const previous = await regularJson(dirs.file);
       if (previous !== null && (typeof previous !== 'object' || Array.isArray(previous))) throw fail('此账号配置根节点无效，已保留原文件。', 409);
       const initial = previous || structuredClone(config.get());
@@ -382,7 +393,7 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
     return { primary: 'primary', ...(registryError ? { error: registryError } : {}), removedAccounts:[...removedAccounts].map(accountId=>({accountId})),accounts: [
       { id: 'primary', workspaceId: 'primary', primary: true, ...primary,...(primaryRemoved?{accountId:'',nickname:'',connected:false,removed:true}:{}),
         status: primaryConnectionError || primaryMismatch ? 'error' : primaryTransition || (primaryWanted ? 'running' : 'stopped'), wanted: primaryWanted,
-        ...(primaryConnectionError ? { error: primaryConnectionError } : primaryMismatch ? { error: '主工作区连接到了其他 QQ；已暂停，请恢复原账号连接。' } : {}) },
+        ...(primaryConnectionError ? { error: primaryConnectionError } : primaryMismatch ? { error: '连接到了其他 QQ；已暂停，请恢复原账号连接。' } : {}) },
       ...[...records.values()].filter(record=>!removedAccounts.has(record.accountId)).map(record => { const runtime = runtimes.get(record.id); return { ...record, workspaceId: record.id, primary: false,
         status: runtime?.status || 'stopped', connected: runtime?.connected === true, paused: runtime?.paused !== false, error: runtime?.error || '' }; }),
     ] };
@@ -393,7 +404,7 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
       Promise.resolve().then(() => {
         if (!primaryWanted) return;
         const observed = guardPrimary();
-        if (!paused && primaryAccount && (!observed.connected || observed.accountId !== primaryAccount.accountId || primaryMismatch)) throw fail('主工作区账号身份尚未就绪，无法恢复自动回复。', 409);
+        if (!paused && primaryAccount && (!observed.connected || observed.accountId !== primaryAccount.accountId || primaryMismatch)) throw fail('账号身份尚未就绪，无法恢复自动回复。', 409);
         const orchestrator = primaryOf()?.orchestrator; return paused ? orchestrator?.pause?.() : orchestrator?.resume?.();
       }),
       ...[...runtimes.values()].filter(runtime => runtime.status === 'running' && alive(runtime.child)).map(async runtime => {
@@ -405,7 +416,7 @@ export function createAccountManager({ appRoot, dataDir, config, bus, getPrimary
     return { ok: true };
   }
   function close() {
-    if (closing) return closing; closed = true; for (const off of primarySubscriptions) off?.();
+    if (closing) return closing; closed = true;appearanceSync?.close(); for (const off of primarySubscriptions) off?.();
     return closing = (async () => { await registryQueue.catch(() => {}); await Promise.allSettled([...queues.values()]); const results = await Promise.allSettled([...records.keys()].map(id => stopInternal(id, false)));
       const failed = results.filter(item => item.status === 'rejected'); if (failed.length) throw new AggregateError(failed.map(item => item.reason), '部分账号工作进程未能停止。'); })();
   }

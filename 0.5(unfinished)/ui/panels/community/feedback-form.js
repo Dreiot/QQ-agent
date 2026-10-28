@@ -1,4 +1,4 @@
-import{request,publishFeedback,cancelFeedbackPublish,onLeave}from'/panels/panel-client.js';
+import{request,publishFeedback,cancelFeedbackPublish,onLeave}from'../panel-client.js';
 import{button,bindDestructiveAction}from'../ui.js';
 import{prepareDialog}from'../dialog-lifecycle.js';
 import{FeedbackDraft}from'./feedback-draft-state.js';

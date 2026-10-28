@@ -116,9 +116,8 @@ try {
   assert.equal(nativeRequests.filter(item => item.path === '/api/QQLogin/RefreshQRcode').length, 1);
   phase = 'qrcode_scanned'; await dialog.locator('.protocol-login-status[data-state="scanned"]').waitFor({ state: 'visible' }); assert.match(await status.textContent(), /已扫码/);
   await settledScreenshot('scanned.png');
-  phase = 'ready'; await dialog.locator('.protocol-login-status[data-state="connected"]').waitFor({ state: 'visible' });
-  await dialog.getByText('本地模拟账号', { exact: true }).waitFor({ state: 'visible' }); await dialog.getByText(account, { exact: true }).waitFor({ state: 'visible' });
-  assert.equal(await image.isVisible(), false); await settledScreenshot('connected.png');
+  phase = 'ready'; await dialog.waitFor({ state: 'detached' });
+  await page.locator('#account-controls').getByText('本地模拟账号',{exact:true}).waitFor({state:'visible'});await page.screenshot({path:path.join(evidence,'connected.png')});
   assert.ok(apiRequests.some(item => item.path === '/api/local-protocols/login/refresh'));
   assert.ok(onebotRequests.some(item=>item.kind==='http'),'production controller must verify the actual OneBot HTTP identity');assert.ok(onebotRequests.some(item=>item.kind==='websocket'),'production verifier must verify the matching actual WebSocket identity');assert.equal(kernel.config.get().onebot.httpUrl,`http://127.0.0.1:${prepared.httpPort}`);assert.equal(kernel.config.get().onebot.wsUrl,`ws://127.0.0.1:${prepared.wsPort}`);
   checks.push('explicit QR refresh, waiting -> scanned -> connected and the actual account traverse native HTTP, production controller, route, host RPC and iframe without mocked API responses');
@@ -130,7 +129,7 @@ try {
     const text = JSON.stringify(visible); for (const secret of [password, credential, scanText, prepared.token, 'synthetic-internal-uid', 'SYNTHETIC_EXTRA_PRIVATE_ONLY']) assert.equal(text.includes(secret), false, 'native private fields must not cross the HTTP or RPC boundary');
   }
   const sessionId = replies.at(-1).sessionId;
-  await dialog.getByRole('button', { name: '完成', exact: true }).click(); await dialog.waitFor({ state: 'detached' });
+  assert.equal(await dialog.count(),0,'verified connection automatically closes the dialog and selects its account');
   await until(() => apiRequests.some(item => item.path === '/api/local-protocols/login/close' && item.body?.sessionId === sessionId), 'the genuine close route did not receive the session');
   const stoppedReads = statusGets(); await wait(1700); assert.equal(statusGets(), stoppedReads, 'a closed login dialog must stop status polling');
   assert.equal((await qa.request('GET', '/api/local-protocols/login?sessionId=' + sessionId)).status, 409);

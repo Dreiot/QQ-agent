@@ -100,7 +100,7 @@ export function installIconMotion(doc=typeof document!=='undefined'?document:nul
     return true;
   };
   const configuration=icon=>{
-    const style=view.getComputedStyle(icon),emblem=icon.dataset.iconMotion==='emblem';
+    const style=view.getComputedStyle(icon),emblem=icon.dataset.iconKey?icon.dataset.iconKey==='emblem':icon.dataset.iconMotion==='emblem';
     // Cell generations have their own cadence; navigation icon preferences
     // cannot accidentally accelerate or freeze the brand's discrete playback.
     const scale=emblem?1:clamp(style.getPropertyValue('--icon-motion-scale')||1,0,1.8,1);

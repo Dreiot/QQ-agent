@@ -17,10 +17,10 @@ export function createLocalProtocols({request,subscribe,openPage,beforeStart=asy
   const note=node('p','muted local-protocol-note','将官方发行版放到下方目录，ZIP 无需解压。');
   const pathRow=node('div','local-protocol-path'),path=node('input'),folderOpen=action('',openFolder);path.readOnly=true;path.setAttribute('aria-label','协议端放置位置');folderOpen.disabled=true;folderOpen.append(createIcon('folder',{size:17}));folderOpen.setAttribute('aria-label','打开协议端文件夹');folderOpen.title='打开文件夹';pathRow.append(path,folderOpen);
   const feedback=node('p','local-protocol-feedback');feedback.setAttribute('role','status');feedback.hidden=true;
-  const assist=node('div','local-protocol-assist'),assistText=node('small'),assistAction=action('继续接入',()=>addAccount(),'primary');assist.hidden=true;assistText.setAttribute('role','status');assist.setAttribute('aria-label','下一步连接操作');assist.append(assistText,assistAction);
+  const assist=node('div','local-protocol-assist'),assistText=node('small'),assistAction=action('继续接入',()=>{const pending=connections.accounts.find(account=>account.workspace&&account.wanted!==false&&!account.connected&&account.provider==='snowluma');return pending?connectAccount(pending,true):addAccount();},'primary');assist.hidden=true;assistText.setAttribute('role','status');assist.setAttribute('aria-label','下一步连接操作');assist.append(assistText,assistAction);
   const error=node('p','field-error local-protocol-error');error.setAttribute('role','alert');error.hidden=true;
   const state=node('div','local-protocol-state'),stateText=node('strong','','检测中…'),stateActions=node('div','actions');
-  const accountLogin=action('选择 QQ',()=>addAccount(),'primary'),login=action('打开协议端页面',()=>open('local-protocol-login',snapshot?.running?.id)),stop=action('停止共享协议端',confirmStop,'local-protocol-stop'),output=action('启动输出',showOutput),stopHint=node('small','muted local-protocol-stop-hint','停止服务会断开全部关联账号。单个账号请用上方卡片。');accountLogin.hidden=login.hidden=stop.hidden=output.hidden=stopHint.hidden=true;stateActions.append(accountLogin,login,output,stop);state.append(stateText,stateActions);
+  const accountLogin=action('选择 QQ',()=>addAccount(),'primary'),login=action('打开协议端页面',()=>open('local-protocol-login',snapshot?.running?.id)),stop=action('关闭协议端',confirmStop,'danger local-protocol-stop'),output=action('启动输出',showOutput),stopHint=node('small','muted local-protocol-stop-hint','关闭协议端将断开全部关联 QQ。只断开一个账号，请使用它的卡片。');accountLogin.hidden=login.hidden=stop.hidden=output.hidden=stopHint.hidden=true;stateActions.append(accountLogin,login,output,stop);state.append(stateText,stateActions);state.setAttribute('aria-label','协议端运行与关闭');
   const list=node('div','local-protocol-providers'),providerViews=new Map(),items=new Map();
   for(const provider of PROVIDERS){
     const card=node('article','local-protocol-provider'),header=node('div','local-protocol-provider-head'),heading=node('strong','',provider.title),download=action('官方发行版',()=>open(provider.id+'-releases'));card.hidden=true;download.title=provider.title+' · GitHub Releases';header.append(heading,download);
@@ -31,10 +31,10 @@ export function createLocalProtocols({request,subscribe,openPage,beforeStart=asy
   // Match the existing card's DOM immediately, including before its document
   // enhancer observes this asynchronously mounted section.
   const autoLabel=node('label','local-protocol-auto settings-toggle-card'),autoTitle=node('span','field-title','启动时恢复连接'),auto=node('input'),autoMark=node('span','settings-toggle-indicator');auto.type='checkbox';auto.disabled=true;auto.setAttribute('aria-label','随QQ-Agent启动');autoMark.setAttribute('aria-hidden','true');autoMark.append(createIcon('check',{size:14}),createIcon('warning',{size:14}));autoLabel.dataset.checked='false';autoLabel.dataset.disabled='true';autoLabel.append(autoTitle,auto,autoMark);
-  const startup=node('div','local-protocol-startup'),startupHint=node('small','muted','所有账号共用，仅恢复已勾选的账号。');startup.append(autoLabel,startupHint);serviceBody.append(head,note,pathRow,state,stopHint,list);root.append(feedback,error,startup,serviceDetails);
+  const startup=node('div','local-protocol-startup'),startupHint=node('small','muted','所有账号共用，仅恢复已勾选的账号。');startup.append(autoLabel,startupHint);serviceBody.append(head,note,pathRow,list);root.append(feedback,error,state,stopHint,startup,serviceDetails);
   let snapshot=null,disposed=false,busy=false,folderOpening=false,revision=0,readPending=false,mounted=false,desiredAuto=false,operationError='',readError='',choiceDialog=null,choiceLife=null,choiceMethods=null,choiceSetup=null,stopDialog=null,stopLife=null,dialog=null,dialogLife=null,outputRead=0,outputVersion=null,outputText=null,outputStatus=null,outputRefresh=null;
   const connections=createAccountConnections({request,subscribe,beforeDisconnect,connectNew:connectAccount,reconnect:account=>connectAccount(account,true),addAccount,onChange:()=>render(),doc});connections.mount(root);root.prepend(root.lastElementChild);root.insertBefore(assist,startup);
-  const protocolLogin=createProtocolLogin({request,subscribe,beforeDisconnect,onAccounts:value=>connections.accept(value),onDetected:value=>connections.setDetected(value),openNative:id=>openPage('protocol-login-native',id),onConnected:()=>{connections.refresh();onConnected();live.request();},doc});
+  const protocolLogin=createProtocolLogin({request,subscribe,beforeDisconnect,onAccounts:value=>connections.accept(value),onDetected:value=>connections.setDetected(value),openNative:id=>openPage('protocol-login-native',id),onConnected:async value=>{connections.refresh();live.request();await onConnected(value);},doc});
   const autoSave=createAutoSave({root,delay:350,save:async()=>{const value=desiredAuto;const result=await request('POST','/api/local-protocols/settings',{autoStart:value});if(!disposed){accept(result);showError('');}},onError:reason=>showError(reason.message)});
   auto.addEventListener('change',()=>{desiredAuto=auto.checked;autoLabel.dataset.checked=String(auto.checked);autoSave.schedule();});
   function showError(message){if(disposed)return;operationError=message||'';renderError();if(choiceDialog){let notice=choiceDialog.querySelector('.local-protocol-choice-error');if(!notice){notice=node('p','field-error local-protocol-choice-error');notice.setAttribute('role','alert');choiceDialog.append(notice);}notice.textContent=operationError;notice.hidden=!operationError;}}
@@ -57,8 +57,8 @@ export function createLocalProtocols({request,subscribe,openPage,beforeStart=asy
     const title=PROVIDERS.find(provider=>provider.id===running?.provider)?.title||'';
     const pending=connections.accounts.some(account=>account.workspace&&(account.wanted===true||account.wanted===undefined&&account.status==='running')&&!account.connected);
     assist.hidden=!snapshot||!connections.loaded||busy||!pending||['preparing','starting','stopping'].includes(running?.status);
-    assistText.textContent=active?'连接服务已启动，等待 QQ 接入':'连接服务尚未启动';assistAction.textContent=active?'继续接入':'连接 QQ';assist.dataset.state=active?'ready':'waiting';
-    const names={preparing:'准备中…',starting:'启动中…',running:'运行中',stopping:'停止中…',error:'启动失败',stopped:'已停止'};
+    assistText.textContent=active&&running.provider==='snowluma'?'部分 QQ 尚未接入；验证 SnowLuma 后恢复连接':active?'连接服务已启动，等待 QQ 接入':'连接服务尚未启动';assistAction.textContent=active&&running.provider==='snowluma'?'验证并恢复':active?'继续接入':'连接 QQ';assist.dataset.state=active?'ready':'waiting';
+    const names={preparing:'准备中…',starting:'启动中…',running:'后台运行',stopping:'停止中…',error:'启动失败',stopped:'已停止'};
     const runtimePresent=!!running&&(active||snapshot?.providers.some(provider=>provider.items.some(item=>item.id===running.id)));
     state.hidden=serviceStatus.hidden=!runtimePresent;
     stateText.textContent=!snapshot?'检测中…':running?`${title} · ${names[running.status]||running.status||'尚未启动'}`:'尚未启动';state.dataset.state=running?.status||'idle';
@@ -80,7 +80,7 @@ export function createLocalProtocols({request,subscribe,openPage,beforeStart=asy
         entry.description.textContent=[item.archive?'ZIP · 启动时解压':'已解压',item.variant].filter(Boolean).join(' · ');
         entry.reason.textContent=item.ready?'':String(item.reason||'此包暂不可运行；请使用官方发行版，源码 ZIP 无法直接启动。');entry.reason.hidden=item.ready===true;
         const choices=[...new Set((item.accounts||[]).filter(value=>/^\d+$/.test(String(value))).map(String))];
-        const thisRunning=active&&running.id===item.id;entry.start.textContent=thisRunning?'运行中':'启动并连接';entry.start.hidden=false;entry.start.disabled=busy||!!active||item.ready!==true;
+        const thisRunning=active&&running.id===item.id;entry.start.textContent=thisRunning?'后台运行':'启动并连接';entry.start.hidden=false;entry.start.disabled=busy||!!active||item.ready!==true;
       }
     }
     for(const [key,entry] of items)if(!seen.has(key)){entry.card.remove();items.delete(key);}
@@ -151,7 +151,7 @@ export function createLocalProtocols({request,subscribe,openPage,beforeStart=asy
       preparing=true;message(startMessage(item),'working');const started=await request('POST','/api/local-protocols/start',{id:item.id,account:account.accountId,deferConnection:true});if(disposed)return;accept(started);
       protocolLogin.open(snapshot.running,{accountId:account.accountId,autoConnect:true});return;
     }
-    if(account.workspace&&!reconnect){connections.accept(await request('POST','/api/accounts/start',{id:account.id}));return;}
+    if(account.workspace&&!reconnect&&provider!=='snowluma'){connections.accept(await request('POST','/api/accounts/start',{id:account.id}));return;}
     protocolLogin.open(snapshot.running,{accountId:account.accountId,autoConnect:true});
     }finally{if(!disposed){if(preparing)message('');busy=false;render();if(readPending){readPending=false;live.request();}}}
   }

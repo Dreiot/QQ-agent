@@ -1,4 +1,4 @@
-import {request,onShellEvent,onLeave,contentReady} from '/panels/panel-client.js';
+import {request,onShellEvent,onLeave,contentReady} from '../panel-client.js';
 import {$,clear} from '../ui.js';
 import {createIcon} from '../icons.js';
 import {installDisposableDialog} from '../dialog-lifecycle.js';

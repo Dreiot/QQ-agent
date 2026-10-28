@@ -25,6 +25,19 @@ test('event fields feed independent action parameters; pure values are evaluated
   const duration=n('value_number',{value:45}),mute=n('mute'),r=rule([mute,duration]);r.nodes[0].next=mute.id;mute.next='$end';bind(mute,'duration',duration,'value');bind(mute,'user_id',r.nodes[0],'user_id');bind(mute,'group_id',r.nodes[0],'group_id');
   const f=fixture();try{const out=await f.management.dryRun(r,{userId:'222',event:{time:1700000000,sender:{nickname:'鱼'}}});assert.equal(out.status,'done',out.error);assert.deepEqual(out.actions.map(a=>[a.action,a.userId,a.seconds]),[['mute','222',45]]);assert.equal(out.values[r.nodes[0].id].time,'1700000000');assert.equal(out.values[r.nodes[0].id]['sender.nickname'],'鱼');assert.equal(out.trace.filter(t=>t.nodeId===duration.id&&t.status==='done').length,1);assert.equal(f.calls.length,0);}finally{await f.close();}
 });
+
+test('field descriptions agree with mixed messages, private context, selected count and single-member override',async()=>{
+  const selected=n('target_users',{users:'222 333'}),mute=n('mute',{seconds:60}),r=rule([selected,mute]),f=fixture();
+  try{
+    const message=[{type:'text',data:{text:'你好'}},{type:'image',data:{file:'local-fixture'}},{type:'at',data:{qq:'444'}}];
+    let out=await f.management.dryRun(r,{userId:'222',event:{message},roles:{'333':'admin'}});
+    assert.equal(out.values[r.nodes[0].id].text,'你好');assert.match(out.values[r.nodes[0].id].message,/3/);
+    assert.equal(out.values[mute.id].count,'2');assert.equal(out.actions.length,1,'selected count includes a protected member who was skipped');assert.deepEqual(out.actions.map(a=>a.userId),['222']);
+    mute.values={user_id:'444'};out=await f.management.dryRun(r,{userId:'222'});assert.deepEqual(out.actions.map(a=>a.userId),['444'],'single-member override refers to the recipient, not the bot or sender');
+    const reply=rule([n('note',{text:'context'})]);reply.groups=[];reply.private=['222'];out=await f.management.dryRun(reply,{chatKind:'private',userId:'222'});assert.equal(out.values[reply.nodes[0].id].chat_type,'private');assert.equal(out.values[reply.nodes[0].id].chat_id,'222');assert.equal(out.values[reply.nodes[0].id].group_id,'未提供');
+    for(const spec of NODE_CATALOG)for(const direction of ['inputs','outputs'])for(const port of spec.ports[direction])assert.ok(port.description?.length>=10,`${spec.type}.${port.key} needs a usable explanation`);
+  }finally{await f.close();}
+});
 test('member lookup, formatting and concatenation produce the actual sent text',async()=>{
   const info=n('member_info'),join=n('text_join',{a:'欢迎 ',b:''}),send=n('send_text'),r=rule([info,send,join]);r.nodes[0].next=info.id;info.next=send.id;send.next='$end';bind(join,'b',info,'nickname');bind(send,'text',join,'text');
   const f=fixture([checked(r)]);try{const out=await f.management.dryRun(r,{userId:'222',memberInfo:{'222':{nickname:'小鱼'}}});assert.equal(out.status,'done',out.error);assert.equal(out.actions[0].value,'欢迎 小鱼');await f.fire();assert.equal(f.sent[0].text,'欢迎 小鱼');const live=f.management.getRun(f.management.snapshot().runs[0].id);assert.equal(live.values,undefined,'live records do not retain raw field values');}finally{await f.close();}

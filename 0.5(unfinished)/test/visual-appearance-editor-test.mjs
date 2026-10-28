@@ -70,7 +70,7 @@ try{
   await until(()=>disk().rules.some(r=>r.page==='*'&&r.selector==='button'&&r.styles.borderRadius==='17px'));
   assert.notEqual(await editor.getByRole('button',{name:'完成',exact:true}).evaluate(n=>getComputedStyle(n).borderRadius),'17px','editor controls are outside the edited component document');
   await editor.getByRole('combobox',{name:'切换预览页面'}).selectOption('memory');await until(async()=>await page.locator('#panel-host iframe').getAttribute('title')==='记忆');
-  await until(async()=>await frame.locator('button').count()>0);
+  await until(async()=>await frame.locator('button').count()>0&&await frame.locator('button').first().evaluate(n=>getComputedStyle(n).borderRadius)==='17px');
   const radius=await frame.locator('button').first().evaluate(n=>getComputedStyle(n).borderRadius);assert.equal(radius,'17px');
   console.log('✓ all-page component styling follows actual navigation and the inspector retains its own usable layout');
   await editor.getByRole('button',{name:'完成',exact:true}).click();await editor.waitFor({state:'detached'});

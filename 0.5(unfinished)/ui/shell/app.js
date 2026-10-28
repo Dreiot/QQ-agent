@@ -122,7 +122,7 @@ const navigationPreferenceObserver=new MutationObserver(()=>{
 });
 navigationPreferenceObserver.observe(document.body,{attributes:true,attributeFilter:['data-sidebar']});
 setNavigationPeek(false);
-let runtimeStatus={},runtimeConfig=null,runtimeConfigGeneration=-1,pauseBusy=false,pauseControls=null,statusRevision=0,configGeneration=0,statusPollAgain=false,statusPollClosed=false,hasMultipleAccounts=currentAccountScope.id!=='primary';
+let runtimeStatus={},runtimeConfig=null,runtimeConfigGeneration=-1,pauseBusy=false,pauseControls=null,statusRevision=0,configGeneration=0,statusPollAgain=false,statusPollClosed=false,hasMultipleAccounts=currentAccountScope.id!=='primary',hasAccountContext=true,initialAccountSelection=false;
 function setText(node,value){const text=String(value);if(node.textContent!==text)node.textContent=text;}
 function setAttribute(node,name,value){const text=String(value);if(node.getAttribute(name)!==text)node.setAttribute(name,text);}
 function setReadiness(id,kind,label,detail){
@@ -135,15 +135,17 @@ function setReadiness(id,kind,label,detail){
 }
 function renderRuntime(){
   const paused=runtimeStatus.orchestrator?.paused;
+  pauseButton.hidden=!hasAccountContext;cacheHitLabel.hidden=!hasAccountContext;
   pauseButton.disabled=pauseBusy||typeof paused!=='boolean';
   setControlContent(pauseButton,pauseBusy?'正在更新…':paused?hasMultipleAccounts?'恢复当前账号':'恢复运行':hasMultipleAccounts?'暂停当前账号':'全局暂停',paused?'play':'pause');
   setAttribute(pauseButton,'aria-pressed',paused===true);
   pauseButton.classList.toggle('is-paused',paused===true);
   setAttribute(pauseButton,'title',(hasMultipleAccounts?'仅影响当前 QQ 账号。':'')+(paused?'恢复自动响应；暂停期间的消息保留为未读。':'暂停自动响应；新消息继续接收并保留为未读。'));
-  setText(runtimeLabel,typeof paused!=='boolean'?'读取运行状态…':paused?hasMultipleAccounts?'当前账号已暂停 · 保留未读':'全局已暂停 · 保留未读':hasMultipleAccounts?'当前账号自动响应已启用':'自动响应已启用');
-  setAttribute(runtimeLabel,'data-state',typeof paused!=='boolean'?'unknown':paused?'warn':'good');
-  runtimeLabel.classList.toggle('is-paused',paused===true);
+  setText(runtimeLabel,!hasAccountContext?'连接 QQ 后开始使用':typeof paused!=='boolean'?'读取运行状态…':paused?hasMultipleAccounts?'当前账号已暂停 · 保留未读':'全局已暂停 · 保留未读':hasMultipleAccounts?'当前账号自动响应已启用':'自动响应已启用');
+  setAttribute(runtimeLabel,'data-state',!hasAccountContext||typeof paused!=='boolean'?'unknown':paused?'warn':'good');
+  runtimeLabel.classList.toggle('is-paused',hasAccountContext&&paused===true);
   pauseControls?.sync();
+  if(!hasAccountContext)document.querySelector('#resume-read-btn')?.setAttribute('hidden','');
   const rate=runtimeStatus.cacheHitRate,usage=runtimeStatus.usage;
   if(typeof rate==='number'&&Number.isFinite(rate)){
     setText(cacheHitLabel,`今日缓存命中 ${(Math.max(0,Math.min(1,rate))*100).toFixed(1)}%`);
@@ -211,6 +213,7 @@ const registry=new PanelRegistry({
   frameHost:host,api,controlApi,onNotify:text=>toast(text),
   onUpdateAction:params=>{if(!updateNotice)throw new Error('版本检查尚未就绪');return updateNotice.action(params);},
   onManageConsoleToken:()=>{if(!tokenManagement)throw new Error('控制台尚未就绪');return tokenManagement.open();},
+  onViewConnectedAccount:(id,snapshot)=>accountSwitcher?.switchTo(id,snapshot),
   onCaptchaDiagnostics:()=>captchaDiagnostics.open(),
   onPublishMarket:(payload,options)=>publishMarketFromHost(api,payload,options),
   onAuthenticateMarket:(payload,options)=>authenticateMarketFromHost(api,payload,options),
@@ -348,7 +351,11 @@ async function navigateAccount(url){
     renderNav();throw error;
   }
 }
-accountSwitcher=createAccountSwitcher({host:document.querySelector('#account-controls'),api:controlApi,notify:toast,navigate:navigateAccount,getCurrentPanel:()=>currentPanelId,onAccounts:rows=>{registry.emit('accounts',{});const multiple=rows.length>1;if(multiple!==hasMultipleAccounts){hasMultipleAccounts=multiple;renderRuntime();}},openConnections:account=>open('settings',{section:'onebot',connectQQ:account?.accountId||true}),beforeDisconnect:async()=>{
+accountSwitcher=createAccountSwitcher({host:document.querySelector('#account-controls'),api:controlApi,notify:toast,navigate:navigateAccount,getCurrentPanel:()=>currentPanelId,onAccounts:rows=>{
+  registry.emit('accounts',{});const actual=rows.filter(row=>row.accountId),multiple=currentAccountScope.id!=='primary'||actual.length>1,context=currentAccountScope.id!=='primary'||!!rows.find(row=>row.id==='primary')?.accountId;
+  if(multiple!==hasMultipleAccounts||context!==hasAccountContext){hasMultipleAccounts=multiple;hasAccountContext=context;renderRuntime();}
+  if(!initialAccountSelection){initialAccountSelection=true;const target=!context&&actual.find(row=>row.connected===true&&row.wanted!==false&&row.status==='running');if(target)void Promise.resolve().then(()=>accountSwitcher?.switchTo(target.id));}
+},openConnections:account=>open('settings',{section:'onebot',connectQQ:account?.accountId||true}),beforeDisconnect:async()=>{
   await visualEditor?.close();
   await panelTransition;const previous=registry.current?.id;await registry.unmount();return async()=>{if(previous)await registry.mount(previous);};
 },beforeSwitch:async()=>{

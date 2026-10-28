@@ -31,6 +31,7 @@ export function serializeSkill(e) {
   const schema = e.configSchema && typeof e.configSchema === 'object' ? structuredClone(e.configSchema) : {};
   return {
     id: e.id, name: e.name, version: e.version, kind: e.kind,
+    compatibility: e.compatibility ? structuredClone(e.compatibility) : null,
     description: e.description ?? '', update: e.update ? structuredClone(e.update) : null, updateError: e.updateError ?? null,
     loaded: e.status === 'active', enabled: !!e.enabled,
     available: !['unmet', 'error'].includes(e.status), active: e.status === 'active',

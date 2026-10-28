@@ -36,12 +36,12 @@
 | 0.4 项目 | 状态 | 原生 0.5 写法 / 差异 |
 |---|---|---|
 | apiVersion:1 | 不可直接判别兼容性 | 0.5 native 也用 1。不能据此自动判断旧接口 |
-| setup(api)/register(api) | 入口改变 | setup(ctx) 推荐；register(ctx)仍支持，但传入原生 SDK |
+| setup(api)/register(api) | 部分自动兼容 | setup(ctx) 推荐；未标记用户包可使用兼容提供者的双接口 SDK |
 | registerTool(def) | 入口改变 | id/name、params、handler(args,execution)；返回最终 ID |
-| parameters | 入口改变 | native 写 params；旧 parameters 仅在明确兼容适配中映射 |
+| parameters | 自动兼容 | 原生写 params；未标记用户包的 parameters 自动映射，并使用 execute(execution,args) |
 | execute(ctx,args) | 入口改变 | native execute/handler 都是 (args,execution)，顺序颠倒会使参数和发送接口失效 |
 | `{content,isError}` | 等价但回执分层 | 可返回业务对象；外层 invoke.ok 仅表示执行是否抛错，须另断 result.isError |
-| api.config() | 入口改变 | ctx.config.get(key)/all()；执行时读取最新值 |
+| api.config() | 自动兼容 | 未标记用户包保留可调用配置入口，同时支持 ctx.config.get(key)/all()/onChange；执行时读取最新值 |
 | manifest.settings 默认值 | 等价 | 用户 settings 合并默认值；schema.default 不是自动默认值来源 |
 | configSchema 字段 | 等价且更严格 | 宿主保存只接受声明字段、验证基础类型/enum/minimum/maximum；明文密钥只在自身 SDK 读取 |
 | configSchema.boolean | 等价 | type:boolean |
@@ -49,7 +49,7 @@
 | configSchema.enum + options | 入口改变 | 用基础type和enum:[JSON值]；不是type:'enum' |
 | configSchema.string + multiline | 部分变化 | 当前普通设置页字符串是文本/密码框；长文本可使用自有面板和自身工具 |
 | configSchema.internal | 入口改变 | 明确声明object/array并由设置页JSON编辑；旧隐藏internal类型不要照搬 |
-| api.log/warn/error 函数 | 入口改变 | ctx.log.info/warn/error/debug 对象方法 |
+| api.log/warn/error 函数 | 自动兼容 | 未标记用户包保留旧调用，同时支持 ctx.log.info/warn/error/debug 方法 |
 | api.fetch | 入口改变 | ctx.http.fetch；web_fetch兼容映射net.outbound，限制目标与响应字节并支持取消 |
 | api.utils.safeJsonParse | 入口改变 | 自己的纯函数或 try/catch；无宿主全局 utils |
 | api.utils.sleep | 入口改变 | 自建可取消等待并登记清理；不要复制旧忽略 signal 的 sleep |
@@ -66,7 +66,7 @@
 | 文件热重载 | 入口改变 | 开关/监听由当前宿主控制；模块图快照、代码指纹和装载次数约束；不要继续说必须QQ_AGENT_DEV=1才热更 |
 | 旧授权继续沿用新源码 | 不可直搬 | 管理员授权绑定目录/源码指纹；改代码后重审 |
 
-当前旧格式识别条件是 apiVersion:0、compat:'04'、compat04:true、legacyApi:'0.4' 或旧 prompt 形状。未标记的 0.4 apiVersion:1 文件可能进入 native 分支，`api.log(...)` 因此失败。即使显式 compat 能通过 setup，也不能据此宣称 execution.sender/任意 OneBot 调用已经兼容。旧项目迁移应逐项改写并自检，不能只添加 compat 字段掩盖后续缺口。
+apiVersion:0、compat:'04'、compat04:true、legacyApi:'0.4' 或旧 prompt 形状仍选择完整的旧生命周期适配。另由 compat-04 提供者为未标记用户包提供双接口 SDK：实际调用 config()/log()/warn()/error() 时记录旧接口使用；工具逐项按 parameters（旧参数顺序）和 params（原生参数顺序）适配，不改市场源码或清单，不通过重复 setup 猜测版本。原生配置/日志方法及其余窄 SDK 保持可用，兼容记录可从扩展 DTO 的 compatibility 字段读取。没有 schema 的未标记工具仍采用原生参数顺序，避免一个旧工具改变同包其它工具的行为；这种含糊的旧工具及旧式并列生命周期声明仍需明确兼容标记。compat-04 停用时原生加载仍可使用，但自动适配不提供。上述自动识别不代表 execution.sender/任意 OneBot 调用等其它旧行为已经兼容。
 
 ## 3. 工具执行上下文逐字段对照
 

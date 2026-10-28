@@ -377,10 +377,10 @@ test('worker boots a paused non-desktop kernel, restricts IPC configuration and 
   const runtime = new EventEmitter(); runtime.connected = true; runtime.env = { QQ_AGENT_ACCOUNTS_CHILD: '1', QQ_AGENT_ACCOUNT_ID: qq1,
     QQ_AGENT_DATA_DIR: dataDir, QQ_AGENT_EXTENSION_ROOT: extensionRoot, QQ_AGENT_RUNTIME_CACHE_ROOT: cacheRoot };
   const sent = [], exits = [], changes = new Set(), bus = new EventEmitter(); runtime.send = (message, callback) => { sent.push(message); callback?.(); };
-  let settings = { server: { token: 'initial-fixture-worker-token' } }, options, stops = 0, liveAccount = qq1;
+  let settings = { server: { token: 'initial-fixture-worker-token' } }, options, stops = 0, liveAccount = qq1, transportReady = true, reconnects = 0;
   const kernel = { config: { get: () => settings, update(patch) { settings = { ...settings, ...patch }; for (const listener of changes) listener(); }, onChange(listener) { changes.add(listener); return () => changes.delete(listener); } },
     orchestrator: { paused: false, pause() { this.paused = true; }, resume() { this.paused = false; }, status() { return { paused: this.paused }; } },
-    transport: { status: () => ({ connected: true, selfId: liveAccount }) },
+    transport: { status: () => ({ connected: true, transportReady, selfId: liveAccount }), reconnect() { reconnects++; } },
     bus: { on(name, listener) { bus.on(name, listener); return () => bus.off(name, listener); } },
     async start() { assert.equal(this.orchestrator.paused, true, 'pause occurs before transport/services start'); return 25101; }, async stop() { stops++; }, };
   const worker = startAccountWorker({ runtimeProcess: runtime, createApplicationImpl: async value => { options = value; return kernel; }, exit: code => { exits.push(code); runtime.connected = false; } });
@@ -395,6 +395,18 @@ test('worker boots a paused non-desktop kernel, restricts IPC configuration and 
     runtime.emit('message', { type: 'account.pause', generation, requestId, paused: false }); assert.equal(kernel.orchestrator.paused, false);
     runtime.emit('message', { type: 'account.configure', generation, requestId, onebot: { httpUrl: 'http://127.0.0.1:19101', wsUrl: 'ws://127.0.0.1:19102', accessToken: protocolToken, httpAccessToken: protocolToken } });
     assert.equal(settings.onebot.httpUrl, 'http://127.0.0.1:19101');
+    assert.equal(reconnects, 0, 'changed configuration leaves reconnect ownership with the transport config listener');
+    runtime.emit('message', { type: 'account.configure', generation, requestId, onebot: { ...settings.onebot } });
+    assert.equal(reconnects, 0, 'an already verified unchanged connection is not interrupted');
+    transportReady = false;
+    runtime.emit('message', { type: 'account.configure', generation, requestId, connectionRevision: requestId, onebot: { ...settings.onebot } });
+    assert.equal(reconnects, 1, 'explicit reconnection immediately retries unchanged ports after QQ reinjection');
+    await until(() => sent.some(message => message.type === 'account.status' && message.connectionRevision === requestId), 'new connection revision was not reported');
+    const pending = sent.findLast(message => message.type === 'account.status');
+    assert.equal(pending.connected, false, 'open sockets without identity verification cannot report success');
+    runtime.emit('message', { type: 'account.pause', generation, requestId, paused: false });
+    assert.equal(sent.at(-1).ok, false, 'unverified connection cannot resume account work');
+    transportReady = true;
     runtime.emit('message', { type: 'account.configure', generation, requestId, onebot: { httpUrl: 'https://evil.example/', wsUrl: 'ws://127.0.0.1:19102', accessToken: protocolToken, httpAccessToken: protocolToken } });
     assert.equal(sent.at(-1).ok, false); assert.equal(settings.onebot.httpUrl, 'http://127.0.0.1:19101');
     settings = { ...settings, server: { token: 'fixture-rotated-worker-token' } }; for (const listener of changes) listener();
@@ -442,6 +454,21 @@ test('failed disconnect persistence keeps the running connection and its enabled
  }finally{if(blocked){await fs.rmdir(file);await fs.rename(backup,file);}await h.manager.close();}
 });
 
+test('open sockets without verified transport readiness never count as connected accounts',async()=>{
+  const h=await harness();try{
+    h.primary.transport.status=()=>({connected:true,selfId:primaryQQ,transportReady:false});assert.equal((await h.manager.snapshot()).accounts.find(a=>a.id==='primary').connected,false);
+    const {workspaceId}=await h.manager.registerConnection(binding()),child=h.children[0];child.emit('message',{type:'account.status',generation:child.generation,accountId:qq1,connected:true,transportReady:false,paused:true});assert.equal((await h.manager.snapshot()).accounts.find(a=>a.id===workspaceId).connected,false);
+    child.emit('message',{type:'account.status',generation:child.generation,accountId:qq1,connected:true,transportReady:true,paused:true});assert.equal((await h.manager.snapshot()).accounts.find(a=>a.id===workspaceId).connected,true);
+    assert.equal((await h.childConfig(workspaceId)).onebot.expectedSelfId,qq1);
+  }finally{await h.manager.close();}
+});
+test('rebinding revokes old success immediately and rejects late status from the previous endpoint revision',async()=>{
+  const h=await harness();try{const {workspaceId}=await h.manager.registerConnection(binding()),child=h.children[0],oldRevision=child.init.connectionRevision;assert.equal((await h.manager.snapshot()).accounts.find(a=>a.id===workspaceId).connected,true);
+    await h.manager.registerConnection(binding(qq1,{httpPort:19201,wsPort:19202}));assert.equal((await h.manager.snapshot()).accounts.find(a=>a.id===workspaceId).connected,false);const revision=child.messages.filter(m=>m.type==='account.configure').at(-1).connectionRevision;assert.notEqual(revision,oldRevision);
+    child.emit('message',{type:'account.status',generation:child.generation,connectionRevision:oldRevision,accountId:qq1,connected:true,transportReady:true,paused:true});assert.equal((await h.manager.snapshot()).accounts.find(a=>a.id===workspaceId).connected,false);
+    child.emit('message',{type:'account.status',generation:child.generation,connectionRevision:revision,accountId:qq1,connected:true,transportReady:true,paused:true});assert.equal((await h.manager.snapshot()).accounts.find(a=>a.id===workspaceId).connected,true);
+  }finally{await h.manager.close();}
+});
 let passed = 0; const failures = [];
 try { for (const { name, run } of cases) { try { await run(); passed++; console.log('PASS accounts manager ' + name); } catch (error) { failures.push(error); console.error('FAIL accounts manager ' + name + ': ' + error.message); } } }
 finally { clearInterval(keepAlive); for (const root of roots) { assert.equal(path.dirname(root), path.resolve(os.tmpdir())); assert.ok(path.basename(root).startsWith('qqa-account-manager-')); await fs.rm(root, { recursive: true, force: true }); } }

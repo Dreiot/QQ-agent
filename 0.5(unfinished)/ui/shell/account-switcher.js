@@ -5,7 +5,7 @@ import {SseClient} from './sse-client.js';
 import {accountNavigationUrl} from './account-navigation.js';
 
 const labels={napcat:'NapCat',snowluma:'SnowLuma'};
-const nameOf=account=>account.nickname||account.accountId||(account.id==='primary'?'主账号':'QQ 账号');
+const nameOf=account=>account.nickname||account.accountId||'QQ 账号';
 const enabledOf=account=>typeof account.wanted==='boolean'?account.wanted:account.status==='running';
 const availableOf=account=>account?.id==='primary'||account?.status==='running';
 const stateOf=account=>account.status==='error'?'连接失败':account.status==='starting'?'连接中…':account.status==='stopping'?'断开中…':!enabledOf(account)?'未连接':account.connected?account.paused?'已连接 · 已暂停':'已连接':account.paused?'等待连接 · 已暂停':'等待连接';
@@ -34,14 +34,14 @@ export function createAccountSwitcher({host,api,currentId=currentAccountScope.id
     if(lostFocus)(accountCards.get(tabStop)?.button||add).focus({preventScroll:true});
     add.disabled=busy;manage.disabled=busy;root.title=current?stateOf(current):'当前账号不可用';root.setAttribute('aria-busy',String(busy));
     if(!views)return;const seen=new Set();
-    for(const account of accounts){
+    for(const account of accounts.filter(account=>/^\d{5,20}$/.test(String(account.accountId||'')))){
       seen.add(account.id);let entry=views.rows.get(account.id);
       if(!entry){const row=node('article','account-manager-row'),dot=node('span','account-current-indicator'),identity=node('span','account-manager-identity'),name=node('strong'),detail=node('small','muted'),status=node('small','account-manager-state'),switchMark=node('span','account-connection-mark'),actions=node('div','account-manager-actions'),mark=node('small','account-manager-current','正在查看'),choose=action('查看',()=>switchTo(account.id)),connectView=action('连接并查看',()=>connectAndView(account.id),'primary account-connect-view'),retry=action('重连',()=>addAccount(entry.account)),toggle=action('',()=>operate(enabledOf(entry.account)?'stop':'start',account.id),'account-connection-card');dot.setAttribute('aria-hidden','true');switchMark.setAttribute('aria-hidden','true');switchMark.append(createIcon('check',{size:16}));toggle.setAttribute('role','switch');identity.append(name,detail,status);status.setAttribute('role','status');toggle.append(dot,identity,switchMark);actions.append(mark,choose,connectView,retry);row.dataset.accountId=account.id;row.append(toggle,actions);entry={row,dot,name,detail,status,mark,choose,connectView,retry,toggle,account};views.rows.set(account.id,entry);views.list.append(row);}
       const active=operation?.id===account.id,progress=active?operation.kind==='start'||operation.kind==='start-view'?'连接中…':operation.kind==='stop'?'断开中…':'切换中…':'';entry.account=account;entry.row.dataset.attention=String(views.targetId===account.id);entry.dot.dataset.state=active?'waiting':account.status==='error'?'error':account.connected?'connected':enabledOf(account)?'waiting':'stopped';setText(entry.name,nameOf(account));setText(entry.detail,[account.accountId,labels[account.provider]].filter(Boolean).join(' · '));entry.detail.hidden=!entry.detail.textContent;setText(entry.status,progress||stateOf(account));entry.mark.hidden=account.id!==currentId;entry.choose.hidden=account.id===currentId||!availableOf(account);entry.choose.disabled=busy;entry.choose.setAttribute('aria-label','查看 '+nameOf(account));entry.connectView.hidden=views.targetId!==account.id||availableOf(account);entry.connectView.disabled=busy;entry.connectView.setAttribute('aria-label','连接并查看 '+nameOf(account));entry.retry.hidden=!enabledOf(account)||(account.status!=='error'&&(account.connected||!availableOf(account)));entry.retry.disabled=busy;entry.retry.setAttribute('aria-label','重新连接 '+nameOf(account));entry.toggle.disabled=busy;entry.toggle.title=operationError&&operationAccountId===account.id?operationError:account.error||(enabledOf(account)?'断开':'连接')+' '+nameOf(account);entry.toggle.setAttribute('aria-checked',String(enabledOf(account)));entry.toggle.setAttribute('aria-busy',String(active));entry.toggle.setAttribute('aria-label','连接 '+nameOf(account));
     }
     for(const entry of views.rows.values())entry.toggle.dataset.state=entry.dot.dataset.state;
     for(const[id,entry]of views.rows)if(!seen.has(id)){entry.row.remove();views.rows.delete(id);}
-    setText(views.count,accounts.filter(account=>account.connected).length+' / '+accounts.length+' 已连接');views.refresh.disabled=busy||reading;views.add.disabled=busy;views.close.disabled=busy;error(operationError||readError);
+    setText(views.count,accounts.filter(account=>account.connected&&account.accountId).length+' / '+accounts.filter(account=>account.accountId).length+' 已连接');views.refresh.disabled=busy||reading;views.add.disabled=busy;views.close.disabled=busy;error(operationError||readError);
   }
   function accept(value){if(!Array.isArray(value?.accounts))throw Error('账号列表响应无效');root.hidden=false;accounts=value.accounts.filter(account=>account&&normalizeAccountId(account.id)).map(account=>({...account,id:normalizeAccountId(account.id)}));onAccounts(accounts);render();}
   async function refresh(){
@@ -50,7 +50,11 @@ export function createAccountSwitcher({host,api,currentId=currentAccountScope.id
     catch(reason){if(!disposed&&ticket===revision){if(currentId==='primary'&&[404,501].includes(reason.status)){root.hidden=true;metadata?.close();}else{readError=reason.message||'无法读取账号列表';error(operationError||readError);}}}
     finally{if(ticket===revision){reading=false;readController=null;render();if(again){again=false;void refresh();}}}
   }
-  async function switchTo(value){
+  async function switchTo(value,verifiedSnapshot){
+    if(verifiedSnapshot&&!disposed&&!busy){
+      const target=verifiedSnapshot.accounts?.find(row=>row.id===value&&row.connected===true&&row.wanted!==false&&availableOf(row));if(!target)throw Error('此 QQ 尚未完成连接核验');
+      ++revision;readController?.abort();readController=null;reading=false;again=false;accept(verifiedSnapshot);
+    }
     const id=normalizeAccountId(value);if(disposed||busy||!id)return;const account=accounts.find(account=>account.id===id);if(!account)return;
     if(!availableOf(account)){openManagement(id);return;}if(id===currentId)return;
     busy=true;operation={id,kind:'switch'};operationError='';operationAccountId='';readError='';error('');render();

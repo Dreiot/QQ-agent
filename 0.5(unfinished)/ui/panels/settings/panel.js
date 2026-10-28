@@ -1,11 +1,13 @@
-import { request, onShellEvent, onLeave, onBeforeLeave, getViewState, onViewStateSnapshot, consoleUpdate, applyHostTheme, openVisualEditor, openConsoleTokenManager, openLocalProtocolPage, settingsSaveAvailable, settingsSaveState, saveSettings, contentReady } from '/panels/panel-client.js';
+import { request, onShellEvent, onLeave, onBeforeLeave, getViewState, onViewStateSnapshot, consoleUpdate, applyHostTheme, openVisualEditor, openConsoleTokenManager, openLocalProtocolPage, settingsSaveAvailable, settingsSaveState, saveSettings, contentReady } from '../panel-client.js';
 import {createLiveRefresh} from '../live-refresh.js';
 import {currentAccountScope} from '../account-scope.js';
+import {viewConnectedAccount} from '../panel-client.js';
 import { $, button, destructiveButton, bindDestructiveAction, clear, confirmAction, row, text } from '../ui.js';
 import { PRESETS, DEFAULT_THEME, LIGHT_BASE, DARK_BASE, normalizeTheme, migrateUikit, resolveScheme, saveCustom, deleteCustom, renameCustom, PERSONALIZATION_FIELDS } from '../theme.js';
 import {createIcon} from '../icons.js';
 import {renderAppearanceControls} from './appearance-controls.js';
 import { FormState, getPath } from './form-state.js';
+import {syncEffectiveConnection} from './connection-fields.js';
 import { createBackgroundEditor } from './bg-editor.js';
 import {uploadBackgroundFile} from './background-upload.js';
 import {isVideoBackground} from '../background-media.js';
@@ -38,13 +40,14 @@ import {createAutoSave,flushAutoSaves,hasAutoSaves,mountSaveFeedback,saveFeedbac
 import {mountSwitchCards} from './switch-cards.js';
 import {organizeAppearance} from './appearance-layout.js';
 import {renderAppearanceFeels} from './appearance-feels.js';
+import {createIconEditor} from './icon-editor.js';
 import {mountChoiceCards} from './choice-cards.js';
 import {installDisposableDialog} from '../dialog-lifecycle.js';
 import {createLocalProtocols} from './local-protocols.js';
 
 const disposeSaveFeedback=mountSaveFeedback();
 const disposeSwitchCards=mountSwitchCards();
-const localProtocols=createLocalProtocols({request,subscribe:onShellEvent,openPage:openLocalProtocolPage,beforeStart:saveAll,beforeDisconnect:async()=>{await flushAutoSaves();await saveAll();},onConnected:()=>{void load();}});
+const localProtocols=createLocalProtocols({request,subscribe:onShellEvent,openPage:openLocalProtocolPage,beforeStart:saveAll,beforeDisconnect:async()=>{await flushAutoSaves();await saveAll();},onConnected:async value=>{try{if(value?.workspaceId)await viewConnectedAccount(value.workspaceId);else await load();}catch(error){report(error.message,true);saveFeedback('error','QQ 已连接，切换失败：'+error.message);}}});
 onLeave(()=>localProtocols.dispose());
 window.addEventListener('pagehide',()=>localProtocols.dispose(),{once:true});
 $('#reload').replaceChildren(createIcon('refresh',{size:18}));
@@ -170,7 +173,7 @@ const protectedSettingsDialog=()=>document.querySelector('dialog[open]:not([data
 const navigationSections=()=>settingsStructure?.sections||sections;
 onLeave(()=>{settingsReadDeferred=false;settingsStructure?.dispose();});
 window.addEventListener('pagehide',()=>settingsStructure?.dispose(),{once:true});
-const controls = new Map();
+const controls = new Map(),editedConnectionFields=new Set();
 const unsafeKeys = new Set(['__proto__', 'prototype', 'constructor', '__replace__']);
 const secretKey = /apikey|api_key|accesstoken|access_token|cookie|password|secret|privatekey|private_key|^token$/i;
 
@@ -206,6 +209,7 @@ function queue(field, value, immediate = false, replace = false) {
   if(field.startsWith('ui.uikit')&&!previousAppearance)previousAppearance=structuredClone(migrateUikit(form.value('ui.uikit')));
   if(field.startsWith('ui.uikit')){const undo=document.querySelector('[aria-label="撤销本次外观调整"]');if(undo)undo.disabled=false;}
   form.set(field, value, { replace });
+  if(['onebot.wsUrl','onebot.httpUrl'].includes(field))editedConnectionFields.add(field);
   if(field.startsWith('ui.uikit'))refreshPalette();
   settingsStructure?.refresh(field);
   costView?.refresh();
@@ -1004,8 +1008,8 @@ function render() {
   desktop.card.append(button('管理控制台访问令牌',async()=>{await save();await openConsoleTokenManager();}));
   field(desktop.fields, 'server.port', '控制台端口（重启生效）', 'number', { min: 1024, max: 65535 }); field(desktop.fields, 'server.autoStart', '开机自启', 'checkbox'); field(desktop.fields, 'server.closeToTray', '关窗留在托盘', 'checkbox'); field(desktop.fields, 'ui.uikit.mode', '界面预设', 'select', { options: schemeOptions(), hint: '亮色/暗色是出厂基准；在其上改动任何一项后，可用下方组件库里的「另存为」变成一个独立的自定义方案。' }); field(desktop.fields, 'ui.showVision', '显示视觉能力标记', 'checkbox', { default: true, onChange: updateModelVision }); field(desktop.fields, 'extensions.hotReload', '自动重新加载本地改动', 'checkbox', {hint:'监视本地文件，保存代码后重新加载；在线检查新版是独立流程。'});
   if(currentAccountScope.id!=='primary'){
-    for(const path of ['server.port','server.autoStart','server.closeToTray']){const input=controls.get(path);if(input){input.disabled=true;input.setAttribute('aria-description','由主账号统一管理');}}
-    const sharedNote=document.createElement('p');sharedNote.className='field-hint full';sharedNote.textContent='控制台端口、开机启动和窗口行为由主账号统一管理。';desktop.fields.prepend(sharedNote);
+    for(const path of ['server.port','server.autoStart','server.closeToTray']){const input=controls.get(path);if(input){input.disabled=true;input.setAttribute('aria-description','客户端共用设置');}}
+    const sharedNote=document.createElement('p');sharedNote.className='field-hint full';sharedNote.textContent='控制台端口、开机启动和窗口行为属于客户端共用设置。';desktop.fields.prepend(sharedNote);
   }
   disposeUpdates();disposeUpdates=mountUpdateStatus({host:desktop.card,action:consoleUpdate,subscribe:onShellEvent});
 
@@ -1322,6 +1326,8 @@ function render() {
     const personalization=renderAppearanceControls({effective,path:P,change:(key,value)=>{queue(P(key),value);pushTheme();}});appearanceChoices.push(personalization.dispose);
     const feels=renderAppearanceFeels({effective,change:(tokens,group,id)=>{for(const [key,value]of Object.entries(tokens))queue(P(key),value);pushTheme();renderKit();kit.fields.querySelector(`[data-appearance-feel="${group}"] [data-feel-value="${id}"]`)?.focus();}});
     presetRow.append(undo);organizeAppearance(kit.fields,{background:bgWrap,presets:presetWrap,themeHeader:head,quick:feels,personalization:personalization.groups,open:openAppearanceGroups});
+    const iconEditor=createIconEditor({read:()=>currentScheme().icons,change:icons=>{queue(P('icons'),icons,false,true);pushTheme();}});appearanceChoices.push(iconEditor.dispose);kit.fields.prepend(iconEditor.element);
+    const sharingNote=document.createElement('p');sharingNote.className='appearance-sharing-note full';sharingNote.textContent='布局、字体、控件与普通图标跨账号同步；配色、背景和左上角图标仅当前账号。';kit.fields.prepend(sharingNote);
     const visualEntry=document.createElement('div');visualEntry.className='appearance-visual-entry full';
     const visualCopy=document.createElement('div'),visualTitle=document.createElement('strong'),visualHint=document.createElement('small');
     visualTitle.textContent='点哪里，改哪里';visualHint.textContent='单独调整任意元素，或统一修改同类控件。变化立即可见，自动保存。';visualCopy.append(visualTitle,visualHint);
@@ -1335,7 +1341,7 @@ function render() {
   refreshBackgroundKit = () => { if (!disposed && !backgroundUploadLeaving && kit.card.isConnected) renderKit(); };
   renderKit();
 
-  settingsStructure=composeSettingsStructure({sections,host:fieldsHost,read:path=>form.value(path),write:(path,value,replace=false)=>{const control=controls.get(path);if(control){if(control.type==='checkbox')control.checked=value;else control.value=typeof value==='object'?JSON.stringify(value,null,2):String(value);}queue(path,value,false,replace);},request,activityDraft,commitActivity,getProviders:()=>providers,onActivityChange:()=>{settingsStructure?.refresh();saveLifecycle.sync();},save:async()=>{try{return await saveAll();}catch(error){report(error.message,true);throw error;}},reload:()=>load(true),onEditorClosed:id=>{if(id==='model-manager'){providerManager?.clearSecrets();void providerManager?.flush().catch(error=>report(error.message,true));}},onIdle:()=>{
+  settingsStructure=composeSettingsStructure({sections,host:fieldsHost,read:path=>form.value(path),write:(path,value,replace=false)=>{const control=controls.get(path);if(control){if(control.type==='checkbox')control.checked=value;else control.value=typeof value==='object'?JSON.stringify(value,null,2):String(value);}queue(path,value,false,replace);},request,activityDraft,commitActivity,getProviders:()=>providers,onConnectionState:payload=>syncEffectiveConnection({form,controls,payload,edited:editedConnectionFields,activeElement:document.activeElement}),onActivityChange:()=>{settingsStructure?.refresh();saveLifecycle.sync();},save:async()=>{try{return await saveAll();}catch(error){report(error.message,true);throw error;}},reload:()=>load(true),onEditorClosed:id=>{if(id==='model-manager'){providerManager?.clearSecrets();void providerManager?.flush().catch(error=>report(error.message,true));}},onIdle:()=>{
     if(settingsReadDeferred){settingsReadDeferred=false;void load();}
   }});
   for (const group of fieldsHost.querySelectorAll('details[data-settings-group]')) {

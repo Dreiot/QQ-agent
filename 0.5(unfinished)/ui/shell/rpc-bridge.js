@@ -4,9 +4,11 @@ import {createSettingsSaveLifecycle} from './settings-save-lifecycle.js';
 import {LOCAL_PROTOCOL_RELEASES,localProtocolPageUrl,localProtocolLoginUrl} from '../panels/local-protocol-links.js';
 import {currentAccountScope,normalizeAccountId} from '../panels/account-scope.js';
 import {accountNavigationUrl} from './account-navigation.js';
+import {downloadRule} from '../panels/rules/rule-export.js';
+import {writeClipboardText} from './clipboard.js';
 
 const RPC={INVALID:-32600,NOT_FOUND:-32601,FORBIDDEN:-32003,INTERNAL:-32603};
-const RPC_METHODS=new Set(['settings.saveState','settings.save','api.request','ctx.call','ctx.getConfig','ctx.notify','ui.confirm','ui.notify','ui.openExternal','ui.destructiveProgress','console.manageToken','console.update','ui.captchaDiagnostics','community.authenticateMarket','community.cancelMarketAuthentication','community.publishMarket','community.cancelMarketPublish','community.publishQuote','community.cancelQuotePublish','community.publishFeedback','community.cancelFeedbackPublish','theme.apply','appearance.open','appearance.select','panel.ready','panel.contentReady','panel.flushed']);
+const RPC_METHODS=new Set(['settings.saveState','settings.save','rules.export','protocol.copyInitialPassword','api.request','ctx.call','ctx.getConfig','ctx.notify','ui.confirm','ui.notify','ui.openExternal','ui.viewConnectedAccount','ui.destructiveProgress','console.manageToken','console.update','ui.captchaDiagnostics','community.authenticateMarket','community.cancelMarketAuthentication','community.publishMarket','community.cancelMarketPublish','community.publishQuote','community.cancelQuotePublish','community.publishFeedback','community.cancelFeedbackPublish','theme.apply','appearance.open','appearance.select','panel.ready','panel.contentReady','panel.flushed']);
 const PROTOCOL_LOGIN_POSTS=new Set(['connect','refresh','inject','close','visibility'].map(action=>'/api/local-protocols/login/'+action));
 const validProtocolSession=value=>typeof value==='string'&&value.length>0&&value.length<=256;
 const EXTERNAL_TARGETS_BY_PANEL=new Map([
@@ -22,14 +24,15 @@ function routePattern(path) {
 
 /** Opaque-origin iframes require targetOrigin="*"; source + panel id + one-time nonce authenticate every message. */
 export class RpcBridge {
-  constructor({frame,api,controlApi=api,manifest,timeout=15000,onUserCall=async()=>{throw new Error('当前运行环境未提供该能力');},onUserConfig=async()=>({}),onNotify=()=>{},onReady=null,onTheme=null,onOpenExternal=null,onPublishQuote=null,onPublishFeedback=null,onManageConsoleToken=null,onUpdateAction=null,onPublishMarket=null,onAuthenticateMarket=null,onCaptchaDiagnostics=null,onDestructiveProgress=null,viewState=null,onAccountStopped=id=>{if(id===currentAccountScope.id&&id!=='primary')window.location.assign(accountNavigationUrl('primary',manifest?.id));}}={}) {
-    this.frame=frame; this.api=api; this.controlApi=controlApi;this.onAccountStopped=onAccountStopped;this.manifest=manifest??{}; this.timeout=timeout; this.onUserCall=onUserCall; this.onUserConfig=onUserConfig; this.onNotify=onNotify; this.onReady=onReady; this.onTheme=onTheme; this.onOpenExternal=onOpenExternal;this.onPublishQuote=onPublishQuote;this.quoteController=null;
+  constructor({frame,api,controlApi=api,manifest,timeout=15000,onUserCall=async()=>{throw new Error('当前运行环境未提供该能力');},onUserConfig=async()=>({}),onNotify=()=>{},exportRule=downloadRule,writeClipboard=writeClipboardText,onReady=null,onTheme=null,onOpenExternal=null,onViewConnectedAccount=null,onPublishQuote=null,onPublishFeedback=null,onManageConsoleToken=null,onUpdateAction=null,onPublishMarket=null,onAuthenticateMarket=null,onCaptchaDiagnostics=null,onDestructiveProgress=null,viewState=null,onAccountStopped=id=>{if(id===currentAccountScope.id&&id!=='primary')window.location.assign(accountNavigationUrl('primary',manifest?.id));}}={}) {
+    this.frame=frame; this.exportRule=exportRule; this.api=api; this.controlApi=controlApi;this.onAccountStopped=onAccountStopped;this.manifest=manifest??{}; this.timeout=timeout; this.onUserCall=onUserCall; this.onUserConfig=onUserConfig; this.onNotify=onNotify; this.onReady=onReady; this.onTheme=onTheme; this.onOpenExternal=onOpenExternal;this.onPublishQuote=onPublishQuote;this.quoteController=null;
     this.onPublishFeedback=onPublishFeedback;this.feedbackController=null;
-    this.onManageConsoleToken=onManageConsoleToken;this.onUpdateAction=onUpdateAction;
+    this.onManageConsoleToken=onManageConsoleToken;this.onUpdateAction=onUpdateAction;this.onViewConnectedAccount=onViewConnectedAccount;
     this.onPublishMarket=onPublishMarket;this.marketController=null;this.onCaptchaDiagnostics=onCaptchaDiagnostics;
     this.onAuthenticateMarket=onAuthenticateMarket;this.authenticationController=null;
     this.onDestructiveProgress=onDestructiveProgress;this.destructiveProgressActive=false;this.leaving=false;
     this.protocolLoginSession=null;this.protocolLoginReleased=new Set();
+    this.writeClipboard=writeClipboard;
     this.backgroundUploads=new Set();
     this.nonce=crypto.randomUUID().replaceAll('-',''); this.controllers=new Set(); this.closed=false; this.ready=false;this.flushed=false; this.flushPromise=null; this.flushResolve=null;this.flushReject=null;this.flushTimer=null;this.flushId=null;this.viewState=viewState;
     this.contentState=null;this.contentReadyPromise=new Promise(resolve=>{this.resolveContentReady=resolve;});
@@ -43,6 +46,29 @@ export class RpcBridge {
   }
   async handle(event) {
     const message=event.data; if(!this.valid(event,message))return;
+    if(message.method==='protocol.copyInitialPassword'){
+      if(this.manifest.kind!=='bundled'||this.manifest.id!=='settings'||!this.allowed('POST','/api/local-protocols/login/initial-password'))return this.fail(message.id,RPC.FORBIDDEN,'此面板不能复制协议端初始密码');
+      const params=message.params;
+      if(this.leaving||!params||Object.keys(params).length!==1||!validProtocolSession(params.sessionId)||params.sessionId!==this.protocolLoginSession)return this.fail(message.id,RPC.INVALID,'账号接入窗口已失效，请重新打开');
+      try{
+        const value=await this.api.request('POST','/api/local-protocols/login/initial-password',{sessionId:params.sessionId});
+        if(this.closed||this.leaving||this.protocolLoginSession!==params.sessionId)return;
+        if(typeof value?.password!=='string'||!/^[a-f0-9]{16}$/i.test(value.password))throw Error('未检测到有效的初始密码');
+        await this.writeClipboard(value.password,this.frame.ownerDocument??globalThis.document);
+        if(this.closed||this.leaving||this.protocolLoginSession!==params.sessionId)return;
+        this.onNotify('初始密码已复制');this.reply(message.id,{ok:true});
+      }catch(error){this.fail(message.id,RPC.INTERNAL,error.message,error.status);}return;
+    }
+    if(message.method==='rules.export'){
+      if(this.manifest.kind!=='bundled'||this.manifest.id!=='rules'||!this.allowed('GET','/api/management'))return this.fail(message.id,RPC.FORBIDDEN,'此面板不能导出规则');
+      const params=message.params,rule=params?.rule;
+      if(this.leaving||!params||typeof params!=='object'||Array.isArray(params)||Object.keys(params).length!==1||!rule||typeof rule!=='object'||Array.isArray(rule)||typeof rule.name!=='string'||!Array.isArray(rule.nodes))return this.fail(message.id,RPC.INVALID,'规则导出内容无效');
+      try{
+        if(new TextEncoder().encode(JSON.stringify({format:'qqa-management-v1',rule},null,2)).length>1024*1024)throw Error('规则文件超过 1 MiB，请拆分后导出');
+        this.exportRule(rule,this.frame.ownerDocument??document);this.reply(message.id,{ok:true});
+      }catch(error){this.fail(message.id,RPC.INTERNAL,error.message);}
+      return;
+    }
     if(message.method==='panel.ready') { this.ready=true; this.onReady?.();if(this.manifest.kind!=='bundled')this.finishContentReady('unsupported'); return; }
     if(message.method==='panel.contentReady'){
       if(this.manifest.kind!=='bundled'){if(Object.hasOwn(message,'id'))this.fail(message.id,RPC.FORBIDDEN,'此通知仅供内置面板使用');return;}
@@ -167,12 +193,21 @@ export class RpcBridge {
     if(message.method==='panel.flushed'&&!Object.prototype.hasOwnProperty.call(message,'id')) { this.finishFlush(message.params); return; }
     if(!Object.prototype.hasOwnProperty.call(message,'id'))return;
     if(this.manifest.kind==='user')return this.handleUser(message);
+    if(message.method==='ui.viewConnectedAccount'){
+      if(this.manifest.kind!=='bundled'||this.manifest.id!=='settings'||!normalizeAccountId(message.params?.id))return this.fail(message.id,RPC.FORBIDDEN,'此面板不能选择账号');
+      try{const value=await this.controlApi.request('GET','/api/accounts');if(this.closed||this.leaving)return;
+        const target=value.accounts?.find(row=>row.id===message.params.id&&row.connected===true&&row.wanted!==false&&/^\d{5,10}$/.test(String(row.accountId||'')));
+        if(!target||typeof this.onViewConnectedAccount!=='function')return this.fail(message.id,RPC.INVALID,'此 QQ 尚未连接，未切换账号');
+        this.reply(message.id,{ok:true,selected:true});void Promise.resolve().then(()=>{if(!this.closed&&!this.leaving)return this.onViewConnectedAccount(target.id,value);}).catch(error=>this.onNotify(error.message));return;
+      }catch(error){return this.fail(message.id,RPC.INTERNAL,error.message);}
+    }
     if(message.method==='ui.notify') { this.onNotify(String(message.params?.text??'')); return this.reply(message.id,{ok:true}); }
     if(message.method==='ui.confirm')return this.fail(message.id,RPC.FORBIDDEN,'Bundled 面板不能直接请求确认');
     if(message.method==='panel.flushed')return this.reply(message.id,{ok:true});
     if(message.method!=='api.request')return this.fail(message.id,RPC.NOT_FOUND,'方法不存在');
     const method=String(message.params?.method??'GET').toUpperCase(),path=message.params?.path;
     if(typeof path!=='string'||!path.startsWith('/api/')||path.includes('..')||!this.allowed(method,path))return this.fail(message.id,RPC.FORBIDDEN,'未授权的面板 API');
+    if(path==='/api/local-protocols/login/initial-password')return this.fail(message.id,RPC.FORBIDDEN,'请通过初始密码复制按钮操作');
     if(method==='POST'&&path==='/api/market/publish')return this.fail(message.id,RPC.FORBIDDEN,'扩展发布需要宿主人机验证，请使用发布按钮');
     if(method==='POST'&&path==='/api/market/login')return this.fail(message.id,RPC.FORBIDDEN,'社区登录需要宿主人机验证，请使用登录或注册按钮');
     if(path==='/api/config'&&method==='POST'){

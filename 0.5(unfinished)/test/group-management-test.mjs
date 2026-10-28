@@ -35,6 +35,78 @@ test('found/missing branches and selectors execute only in selected groups',asyn
     assert.ok(f.management.snapshot().runs[0].trace.some(t=>t.status==='skipped'));
   }finally{await f.close();}
 });
+
+test('ordinary messages do not consume the execution cooldown before a matching message',async()=>{
+  let clock=100000;
+  const r=rule([node('text_match',{match:'equals',text:'#sl'}),node('mute',{seconds:600})],{cooldownSeconds:30}),f=fixture([r],{now:()=>clock});
+  const fire=async(text)=>{f.management.handleEvent(message(text));await until(()=>!f.management.snapshot().active);};
+  try{
+    await fire('普通消息');assert.equal(f.calls.length,0);
+    clock+=24357;await fire('#sl');assert.equal(f.calls.length,1,'a non-matching message must not start the 30 second cooldown');
+    assert.equal(f.management.snapshot().runs[0].actionCount,1);
+    assert.equal(f.management.snapshot().runs[1].effectCount,0);
+    clock+=1000;await fire('#sl');assert.equal(f.calls.length,1,'a successful operation must start cooldown');
+    clock+=29000;await fire('#sl');assert.equal(f.calls.length,2,'cooldown expires relative to the successful operation');
+  }finally{await f.close();}
+});
+
+test('a frequency condition can accumulate messages before starting execution cooldown',async()=>{
+  let clock=100000;const f=fixture([rule([node('message_frequency',{seconds:10,count:5,scope:'user'}),node('mute',{seconds:60})],{cooldownSeconds:30})],{now:()=>clock});
+  try{
+    for(let i=0;i<5;i++){f.management.handleEvent(message('hello'));await until(()=>!f.management.snapshot().active);clock+=1000;}
+    assert.equal(f.calls.length,1,'the fifth message must reach the condition even when cooldown exceeds the observation window');
+    assert.equal(f.management.snapshot().runs.length,5);
+    assert.deepEqual(f.management.snapshot().runs.map(r=>r.effectCount),[1,0,0,0,0]);
+  }finally{await f.close();}
+});
+
+test('a failed first action is retryable while an earlier successful action keeps cooldown',async()=>{
+  let clock=100000;const r=rule([node('mute',{seconds:60}),node('rename_group',{text:'test'})],{cooldownSeconds:30}),f=fixture([r],{now:()=>clock});
+  let failFirst=true;
+  f.transport.actions.moderateGroup=async(g,op,options)=>{options.current();if(failFirst||op.action==='rename_group')throw Error('synthetic action failure');f.calls.push({g,...op});};
+  const fire=async()=>{f.management.handleEvent(message());await until(()=>!f.management.snapshot().active);};
+  try{
+    await fire();assert.equal(f.management.snapshot().runs[0].status,'failed');assert.equal(f.management.snapshot().runs[0].effectCount,0);
+    failFirst=false;clock+=1000;await fire();assert.equal(f.calls.length,1);assert.equal(f.management.snapshot().runs[0].status,'failed');assert.equal(f.management.snapshot().runs[0].actionCount,1);
+    const count=f.management.snapshot().runs.length;clock+=1000;await fire();assert.equal(f.calls.length,1);assert.equal(f.management.snapshot().runs.length,count,'a later failure must not undo cooldown for an already applied action');
+  }finally{await f.close();}
+});
+
+test('protected targets and denied permissions do not consume cooldown; pending actions still exclude duplicate runs',async()=>{
+  let clock=100000;const f=fixture([rule([node('mute',{seconds:60})],{cooldownSeconds:30})],{now:()=>clock});
+  const fire=async(user='222')=>{f.management.handleEvent(message('hello',user));await until(()=>!f.management.snapshot().active);};
+  let release;
+  try{
+    await fire('444');assert.equal(f.management.snapshot().runs[0].effectCount,0);
+    f.setRole('member');await fire();assert.equal(f.management.snapshot().runs[0].status,'failed');
+    f.setRole('admin');const action=f.transport.actions.moderateGroup;
+    f.transport.actions.moderateGroup=async(...args)=>{await new Promise(resolve=>release=resolve);return action(...args);};
+    clock+=1000;f.management.handleEvent(message());await until(()=>release);
+    f.management.handleEvent(message());assert.equal(f.management.snapshot().active,1);
+    release();await until(()=>!f.management.snapshot().active);assert.equal(f.calls.length,1);assert.equal(f.management.snapshot().runs[0].actionCount,1);
+  }finally{release?.();await f.close();}
+});
+
+test('edited rule and changed transport identity do not inherit stale cooldown; moving a node preserves it',async()=>{
+  let clock=100000;const r=rule([node('mute',{seconds:60})],{cooldownSeconds:30}),f=fixture([r],{now:()=>clock});
+  const fire=async()=>{f.management.handleEvent(message());await until(()=>!f.management.snapshot().active);clock+=1000;};
+  try{
+    await fire();assert.equal(f.calls.length,1);
+    f.update([{...r,layout:{version:1,positions:{[r.nodes[0].id]:{x:10,y:20}}}}]);await fire();assert.equal(f.calls.length,1);
+    f.update([{...r,nodes:r.nodes.map(n=>n.type==='mute'?{...n,config:{seconds:120}}:n)}]);await fire();assert.equal(f.calls.length,2);
+    f.setIdentity('different-connection');await fire();assert.equal(f.calls.length,3);
+  }finally{await f.close();}
+});
+
+test('partial sending preserves an applied effect without retaining live message payloads',async()=>{
+  let clock=100000,sends=0;const send={async sendTextBatch(_key,_text,options){await options.beforeSend();sends++;return {ok:false,sent:[{id:'synthetic'}]};}};
+  const f=fixture([rule([node('send_text',{text:'private content'})],{cooldownSeconds:30})],{now:()=>clock,send});
+  try{
+    f.management.handleEvent(message());await until(()=>!f.management.snapshot().active);const record=f.management.snapshot().runs[0];
+    assert.equal(record.status,'failed');assert.equal(record.actionCount,1);assert.equal(record.effectCount,1);assert.deepEqual(record.actions,[]);assert.equal(record.values,undefined);
+    clock+=1000;f.management.handleEvent(message());await until(()=>!f.management.snapshot().active);assert.equal(sends,1);
+  }finally{await f.close();}
+});
 test('all users excludes protected roles and self; no admin => no privileged actions',async()=>{
   const r=rule([node('target_all'),node('kick')]),f=fixture([r]);try{
     f.setRole('member');f.management.handleEvent(message());await until(()=>f.management.snapshot().runs.length&&!f.management.snapshot().active);assert.equal(f.calls.length,0);assert.match(f.management.snapshot().runs[0].error,/管理员/);

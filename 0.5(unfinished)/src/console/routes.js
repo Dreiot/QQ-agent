@@ -850,7 +850,8 @@ export function registerConsoleRoutes(http, deps) {
     if (cfg().proactive?.enabled) orchestrator?.startProactiveLoop?.(); else orchestrator?.stopProactiveLoop?.();
     deps.initPriceFeed?.();
     emit(deps, 'status', { configUpdated: true });
-    return { ok: true, config: sanitizeConfigForApi(cfg()) };
+    const result={ ok: true, config: sanitizeConfigForApi(cfg()) };
+    return body.ui?.uikit&&deps.syncAppearance?Promise.resolve(deps.syncAppearance()).then(()=>({...result,config:sanitizeConfigForApi(cfg())})):result;
   }
   http.route('POST', '/api/config', ({ body }) => applyConfigPatch(body));
   const settingsSaveLifecycle = (deps.components?.['console.settingsSaveLifecycle'] ?? createSettingsSaveLifecycleController)({

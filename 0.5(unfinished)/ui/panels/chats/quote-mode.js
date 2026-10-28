@@ -1,4 +1,4 @@
-import{request,publishQuote,cancelQuotePublish,onLeave}from'/panels/panel-client.js';
+import{request,publishQuote,cancelQuotePublish,onLeave}from'../panel-client.js';
 import{button,destructiveButton,dateTime}from'../ui.js';
 import{prepareDialog}from'../dialog-lifecycle.js';
 

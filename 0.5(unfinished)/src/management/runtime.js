@@ -38,6 +38,15 @@ export function createGroupManagement({config,transport,send,dataDir,bus,isPause
     for(const item of active.values())if(!liveRules.get(item.rule.id)?.enabled||liveRules.get(item.rule.id)!==item.binding)item.controller.abort();
   }
   const connected=()=>transport.status?.().connected===true;
+  const cooldownKey=run=>JSON.stringify([run.rule.id,run.kind,run.chatId,run.user]);
+  // Conditions, queries and waiting are not executions. Commit only after an
+  // effect succeeds, sharing the receipt across graph branches and loop items.
+  function effect(run,{action=false,count=1}={}){
+    run.record.effectCount+=count;if(action)run.record.actionCount+=count;
+    if(run.dry||run.effects.committed)return;run.effects.committed=true;
+    const key=run.effects.key;cooldowns.delete(key);cooldowns.set(key,{at:now(),binding:run.binding,identity:run.identity,self:run.self});
+    if(cooldowns.size>10000)cooldowns.delete(cooldowns.keys().next().value);
+  }
   function guard(run){if(run.controller.signal.aborted)throw cancel();if(run.dry)return;if(!running||isPaused()||run.identity!==identityOf()||run.self!==String(transport.selfId)||!connected()||run.source?.signal?.aborted||run.source?.current?.()===false||!run.binding?.enabled||liveRules.get(run.rule.id)!==run.binding)throw cancel();}
   function trace(run,node,status,detail='',extra={}){run.record.revision=(run.record.revision??0)+1;const skipped=status==='skipped'&&!['recall_window','for_each'].includes(node.type)?run.record.trace.find(item=>item.nodeId===node.id&&item.status==='skipped'):null;if(skipped){skipped.count=(skipped.count??1)+1;skipped.detail=`跳过 ${skipped.count} 位受保护或身份不适用的用户`;}else if(run.record.trace.length<800)run.record.trace.push({at:now(),nodeId:node.id,type:node.type,label:specs.get(node.type)?.label??node.type,status,detail,...(run.iterationPath?{iterationPath:run.iterationPath}:{}),...extra});if(!run.dry)publish();}
   function delay(run,ms){return new Promise((resolve,reject)=>{const signal=run.controller.signal;const abort=()=>{clearTimeout(t);signal.removeEventListener('abort',abort);reject(cancel());};const t=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},ms);signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();});}
@@ -76,10 +85,10 @@ export function createGroupManagement({config,transport,send,dataDir,bus,isPause
     async function runScope(initial,values,scope=null,entry=nodes[0].id){
     await executeManagementFlow({rule:run.rule,catalog,initial,scope,entry,onContext:context=>{initial.elapsed=Math.max(initial.elapsed,context.elapsed);},signal:initial.controller.signal,onFailure:()=>initial.controller.abort(),step:async(state,original,index)=>{guard(state);trace(state,original,'running');try{if(state.kind==='private'&&specs.get(original.type)?.groupOnly)throw Error('该节点仅支持群聊');const {run,node,values:inputValues}=await values.prepare(state,original);let pass=true,memberData=null,actionSuccess=false,completedAt;let extraOutputs={};
       const extended=await evaluateExtendedNode(run,node,{input:key=>inputValues[key],at:()=>at(run),random:()=>random(run),recent:since=>recent(run,since),member:user=>member(run,user),members:()=>members(run),wait:async seconds=>{if(run.dry)run.elapsed+=seconds;else await delay(run,seconds*1000);},state:run.dry?run.simCounters:counters,gates:run.dry?run.simGates:gates,persist:()=>{if(!run.dry)persist();}});
-      if(extended)pass=extended.pass;
-      else if(node.type==='recall_window'){const outcome=await recallMessageWindow({run,node,startTime:inputValues.start_time,window,waiters,guard,at,member,transport,trace,ledger:recallLedger});actionSuccess=outcome.failed===0;extraOutputs=outcome;completedAt=at(run)/1000;}
+      if(extended){pass=extended.pass;if(['counter_add','counter_daily','counter_reset','note'].includes(node.type))effect(run);}
+      else if(node.type==='recall_window'){const outcome=await recallMessageWindow({run,node,startTime:inputValues.start_time,window,waiters,guard,at,member,transport,trace,ledger:recallLedger,onRecalled:()=>effect(run,{action:true})});actionSuccess=outcome.failed===0;extraOutputs=outcome;completedAt=at(run)/1000;}
       else if(node.type==='event_source'){const group=String(inputValues.group_id);if(!run.rule.groups.includes(group))throw Error('事件源群号不在规则范围');extraOutputs={detail:'事件流已建立，按需读取',events:run.dry?simulatedEvents(run,inputValues.event_type,group,at(run)-inputValues.replay_seconds*1000):channel.source({group,type:inputValues.event_type,since:at(run)-inputValues.replay_seconds*1000,signal:run.controller.signal})};}
-      else if(node.type.startsWith('state_')){extraOutputs=graphState.apply(node.type,inputValues,{ruleId:run.rule.id,dryMap:run.dry?run.simState:undefined});extraOutputs.detail=node.type==='state_read'?'状态已读取':'状态已更新';}
+      else if(node.type.startsWith('state_')){extraOutputs=graphState.apply(node.type,inputValues,{ruleId:run.rule.id,dryMap:run.dry?run.simState:undefined});if(node.type!=='state_read')effect(run);extraOutputs.detail=node.type==='state_read'?'状态已读取':'状态已更新';}
       else if(node.type==='for_each'){
         let processed=0,failed=0;const items=inputValues.items;
         try{for await(const item of items){guard(run);if(processed>=node.config.max_items)throw Error('逐项处理已达到项数上限');if(!node.each||node.each==='$end')throw Error('请连接逐项处理的“每项”出口');
@@ -122,11 +131,11 @@ export function createGroupManagement({config,transport,send,dataDir,bus,isPause
             if(!send)throw Error('消息发送队列尚未就绪');
             const beforeSend=async()=>{guard(run);};
             const options={signal:run.controller.signal,beforeSend};
-            const result=node.type==='send_at'?await send.sendSegments((run.kind==='private'?`private:${run.chatId}`:`group:${run.group}`),[...run.targets.map(id=>({type:'at',id})),{type:'text',text:operation.value}],options):await send.sendTextBatch((run.kind==='private'?`private:${run.chatId}`:`group:${run.group}`),operation.value,options);if(result?.ok===false)throw Error(`管理消息未完整发送（已发送 ${result.sent?.length??0} 条）`);
-          }else await invokeModeration(run,node.type==='recall'&&((run.dry&&run.loopItem)||channel.owns(run.loopItem,run.group,operation.messageId))?{...operation,action:'recall_window_message',observedGroupId:run.group}:operation);actionSuccess=true;completedAt=at(run)/1000;
+            const result=node.type==='send_at'?await send.sendSegments((run.kind==='private'?`private:${run.chatId}`:`group:${run.group}`),[...run.targets.map(id=>({type:'at',id})),{type:'text',text:operation.value}],options):await send.sendTextBatch((run.kind==='private'?`private:${run.chatId}`:`group:${run.group}`),operation.value,options);if(result?.ok===false){if(result.sent?.length)effect(run,{action:true});throw Error(`管理消息未完整发送（已发送 ${result.sent?.length??0} 条）`);}
+          }else await invokeModeration(run,node.type==='recall'&&((run.dry&&run.loopItem)||channel.owns(run.loopItem,run.group,operation.messageId))?{...operation,action:'recall_window_message',observedGroupId:run.group}:operation);effect(run,{action:true});actionSuccess=true;completedAt=at(run)/1000;
         }
       }else if(node.type==='stop'){values.complete(state,original,run);trace(run,node,'done');return null;}
-      else if(handlers[node.type]){pass=(await handlers[node.type]({node,groupId:run.group,event:structuredClone(run.event),targets:[...run.targets],signal:run.controller.signal,dryRun:run.dry}))!==false;}
+      else if(handlers[node.type]){pass=(await handlers[node.type]({node,groupId:run.group,event:structuredClone(run.event),targets:[...run.targets],signal:run.controller.signal,dryRun:run.dry}))!==false;if(pass&&!specs.get(node.type)?.branch&&!specs.get(node.type)?.pure)effect(run);}
       else if(!specs.get(node.type)?.trigger)throw Error('该节点尚未提供执行器');
       if(node.type==='recall')extraOutputs.detail='消息 '+run.event.message_id;guard(run);const port=extended?.port??(pass?'next':'otherwise'),nextNodeIds=nodeEdges(nodes,index,catalog).filter(e=>e.port===port&&e.to!=='$end').map(e=>e.to);
       values.complete(state,original,run,{result:pass,member:memberData,success:actionSuccess,completedAt,extra:extraOutputs});trace(run,node,'done',extended?.detail||extraOutputs.detail||(specs.get(node.type)?.branch?(pass?'是':'否'):run.targets.length?`${run.targets.length} 位用户`:''),{port,nextNodeId:nextNodeIds[0]??'$end',nextNodeIds});return port;
@@ -142,12 +151,14 @@ export function createGroupManagement({config,transport,send,dataDir,bus,isPause
     run.startedAt=run.dry?Number(scenario.now??now()):now();run.simState=new Map();if(run.dry){if(scenario.stateValues!==undefined&&(!Array.isArray(scenario.stateValues)||scenario.stateValues.length>100))throw Error('预置状态最多 100 项');for(const item of scenario.stateValues??[]){if(typeof item.key!=='string'||!item.key||item.key.length>300)throw Error('预置状态键无效');run.simState.set(JSON.stringify([item.scope==='account'?'$account':rule.id,item.key]),{value:validateLiteralValue(item.value),expires:0});}}run.simCounters=new Map();run.simGates=new Map();
     run.simMembers=new Map((scenario?.members??[]).map(m=>typeof m==='object'?[String(m.userId),m]:[String(m),{}]));
     if(run.dry)for(const n of rule.nodes)if(n.type.startsWith('counter_')&&Object.hasOwn(scenario.counterValues??{},n.config.key)){const value=Number(scenario.counterValues[n.config.key]);if(!Number.isInteger(value)||value<0||value>1000000)throw Error('模拟计次数值无效');const day=new Date(run.startedAt);run.simCounters.set(JSON.stringify([rule.id,run.scopeId,n.config.scope==='group'?'$group':run.user,n.config.key,...(n.type==='counter_daily'?['$day',`${day.getFullYear()}-${day.getMonth()+1}-${day.getDate()}`]:[])]),{value,expires:run.startedAt+172800000});}
-    run.record={id:crypto.randomUUID(),ruleId:rule.id,name:rule.name,chatKind:run.kind,chatId:run.chatId,...(run.kind==='group'?{groupId:run.group}:{}),userId:run.user,startedAt:now(),dryRun:run.dry,status:'running',trace:[],actions:[]};
+    run.effects={committed:false,key:cooldownKey(run)};
+    run.record={id:crypto.randomUUID(),ruleId:rule.id,name:rule.name,chatKind:run.kind,chatId:run.chatId,...(run.kind==='group'?{groupId:run.group}:{}),userId:run.user,startedAt:now(),dryRun:run.dry,status:'running',effectCount:0,actionCount:0,trace:[],actions:[]};
     const work=(async()=>{try{await execute(run);run.record.status='done';}catch(e){run.record.status=e.name==='AbortError'?'cancelled':'failed';run.record.error=e.message;}finally{run.record.finishedAt=now();if(!run.dry){active.delete(run.record.id);history.unshift(run.record);history=history.slice(0,100);persist();}}return run.record;})();
     run.promise=work;if(!run.dry)active.set(run.record.id,run);return work;
   }
-  function launch(rule,context){if(!running||isPaused()||!connected()||active.size>=32)return;const key=`${rule.id}:${context.kind??'group'}:${context.id??context.group}:${context.user??''}`;if([...active.values()].some(r=>r.rule.id===rule.id&&r.kind===(context.kind??'group')&&r.chatId===String(context.id??context.group)&&r.user===String(context.user??''))||now()-(cooldowns.get(key)??-Infinity)<rule.cooldownSeconds*1000)return;
-    cooldowns.delete(key);cooldowns.set(key,now());if(cooldowns.size>10000)cooldowns.delete(cooldowns.keys().next().value);void perform(rule,context);
+  function launch(rule,context){if(!running||isPaused()||!connected()||active.size>=32)return;const kind=context.kind??'group',chatId=String(context.id??context.group),user=String(context.user??''),key=cooldownKey({rule,kind,chatId,user}),previous=cooldowns.get(key);
+    if([...active.values()].some(r=>r.rule.id===rule.id&&r.kind===kind&&r.chatId===chatId&&r.user===user)||previous?.binding===rule&&previous.identity===identityOf()&&previous.self===String(transport.selfId)&&now()-previous.at<rule.cooldownSeconds*1000)return;
+    void perform(rule,context);
   }
   function handleEvent(event,source){if(!running||!['group','private'].includes(event.kind))return;
     if(windowIdentity!==identityOf()){window.clear();channel.clear();recallLedger.clear();windowIdentity=identityOf();}

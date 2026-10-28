@@ -26,15 +26,30 @@ function normalizeLegacyResult(value) {
   return result;
 }
 
-export function createCompatApi(ctx, manifest = {}, { skillId = manifest.id ?? ctx?.id ?? 'legacy-skill' } = {}) {
+export function createCompatApi(ctx, manifest = {}, { skillId = manifest.id ?? ctx?.id ?? 'legacy-skill', automatic = false, onLegacyUse = () => {} } = {}) {
   const declared = new Set(Array.isArray(manifest.permissions) ? manifest.permissions.map(String) : []);
   // 兼容旧声明：web_fetch 仅映射到受控的 net.outbound 能力，
   // 不会获得 net.raw 或其它网络入口。
   const outboundAllowed = declared.has('net.outbound') || declared.has('web_fetch');
   const legacyToolIds = [];
+  const legacyFeatures = new Set();
+  const legacyUse = feature => {
+    if (!automatic || legacyFeatures.has(feature)) return;
+    legacyFeatures.add(feature); onLegacyUse(feature);
+  };
   const logger = ctx?.log ?? console;
   const logWith = (method, args) => logger?.[method]?.(`[${skillId}] ${format(args)}`);
-  const config = () => ctx?.config?.all?.() ?? {};
+  const config = () => { legacyUse('config()'); return ctx?.config?.all?.() ?? {}; };
+  const log = (...args) => { legacyUse('log()'); return logWith('info', args); };
+  // An unmarked apiVersion:1 package may use either SDK. Keep the current
+  // methods and recognize old calls as they happen, without inspecting or
+  // rewriting source, retrying setup, or changing the permission boundary.
+  if (automatic) {
+    Object.assign(config, ctx?.config);
+    for (const name of ['info', 'warn', 'error', 'debug', 'trace', 'child']) {
+      if (typeof logger?.[name] === 'function') log[name] = logger[name].bind(logger);
+    }
+  }
   const isSkillActive = (id) => {
     if (String(id) === String(skillId)) return true;
     return ctx?.capability?.('extensions.state')?.isActive(id) === true;
@@ -49,16 +64,18 @@ export function createCompatApi(ctx, manifest = {}, { skillId = manifest.id ?? c
     if (!def || typeof def !== 'object') throw new Error('工具定义必须是对象');
     const execute = def.execute ?? def.handler;
     if (typeof execute !== 'function') throw new Error('旧工具缺少 execute/handler');
-    // Explicit params selects the current argument convention inside a legacy
-    // module; parameters (and schema-less old tools) retain execute(ctx,args).
-    const nativeContract = Object.hasOwn(def, 'params');
+    // Explicit params always selects the current argument convention. In auto
+    // mode only parameters selects the old one: a sibling old tool or log call
+    // must not change a schema-less native tool's argument order.
+    const nativeContract = Object.hasOwn(def, 'params') || (automatic && !Object.hasOwn(def, 'parameters'));
+    if (!nativeContract) legacyUse(Object.hasOwn(def, 'parameters') ? 'tool.parameters' : 'tool.context-first');
     const mapped = {
       ...def,
       id: def.id ?? def.name,
       params: def.params ?? def.parameters,
       execute: async (args, context) => {
         const result = await (nativeContract ? execute.call(def, args, context) : execute.call(def, context, args));
-        return normalizeLegacyResult(result);
+        return automatic && nativeContract ? result : normalizeLegacyResult(result);
       },
     };
     const finalId = ctx.registerTool(mapped);
@@ -76,14 +93,15 @@ export function createCompatApi(ctx, manifest = {}, { skillId = manifest.id ?? c
     : denyFetch;
 
   return {
+    ...(automatic ? ctx : {}),
     registerTool,
     config,
     isSkillActive,
     capability,
     hasCapability,
-    log: (...args) => logWith('info', args),
-    warn: (...args) => logWith('warn', args),
-    error: (...args) => logWith('error', args),
+    log,
+    warn: (...args) => { legacyUse('warn()'); return logWith('warn', args); },
+    error: (...args) => { legacyUse('error()'); return logWith('error', args); },
     fetch,
     utils: {
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0))),
@@ -147,5 +165,6 @@ export default {
   setup(ctx) {
     // compat-04 本身只注册能力；loader 传入目标 ctx 与旧入口。
     ctx.registerCapability?.('compat-04.createSkillApi', ({ targetCtx, legacy, manifest, deferSetup = false } = {}) => adaptLegacySkill(targetCtx ?? ctx, legacy, manifest, { deferSetup }));
+    ctx.registerCapability?.('compat-04.createAutomaticApi', ({ targetCtx, manifest, onLegacyUse } = {}) => createCompatApi(targetCtx ?? ctx, manifest, { automatic: true, onLegacyUse }));
   },
 };

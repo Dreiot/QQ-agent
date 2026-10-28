@@ -1,0 +1,10 @@
+.management-inspector{gap:12px}.management-node-description{margin:0;font-size:12px;line-height:1.6}
+.management-value-field{gap:6px;padding:10px 0}.management-value-field[hidden],.management-manual-editor[hidden],.management-value-section[hidden]{display:none!important}
+.management-value-field-head>strong{font-weight:600}.management-value-section>summary{margin:0;padding:3px 0 7px;font-weight:600}
+.management-value-origin,.management-value-binding{display:flex;align-items:center;flex-wrap:wrap;gap:5px 8px;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.management-value-origin[data-requirement=required]{border-color:var(--warn)}.management-source-kind{font-size:10px;color:var(--muted);flex:none}.management-source-text{flex:1;min-width:100px;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.management-source-edit,.management-source-reset{min-height:24px!important;padding:2px 5px!important;font-size:10px!important;color:var(--accent);background:transparent!important;border-color:transparent!important}.management-source-reset{justify-self:start}
+.management-value-explanation{font-size:11px;color:var(--muted)}.management-value-explanation>summary{cursor:pointer;font-size:10px;padding:3px 0}.management-value-explanation[open]{display:grid;gap:6px}.management-value-explanation p{margin:3px 0}.management-value-explanation code{display:block;margin-top:5px}
+.management-manual-editor{display:grid;gap:6px}.management-manual-editor>input,.management-manual-editor>textarea,.management-manual-editor>select{width:100%;min-width:0}
+.management-pin-state[data-requirement=auto]{color:var(--value-color)}.management-pin-state[data-requirement=linked]{display:inline-block}.management-port-legend{font-size:11px;margin-inline:4px 8px}
+.management-flow-tools .management-field-mode{font-size:11px}.management-field-mode[aria-pressed=true]{color:var(--accent);border-color:var(--accent)}

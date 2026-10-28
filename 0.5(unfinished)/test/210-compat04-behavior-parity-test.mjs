@@ -209,3 +209,43 @@ test('210 adapted context retains scoped SDK and denies undeclared HTTP/storage 
   }});}`); await e.loader.loadAll();
   const r=await e.run([['narrow__check',{}]]); assert.deepEqual(payload(r,'narrow__check'),{networkDenied:true,storeDenied:true,kernel:false,registry:false,rawFetch:false}); assert.equal(e.permissions.pending().length,0);
 });
+
+test('210 unmarked apiVersion:1 detects old calls, preserves mixed native tools and reads live settings without source changes', async t => {
+  const e=environment(t);
+  const dir=e.plugin('unmarked',`let api;
+    export function setup(value){api=value;
+      api.registerTool({id:'old',name:'Old unmarked',parameters:{type:'object',properties:{input:{type:'string'}},required:['input']},execute(ctx,args){api.log('AUTO_OLD_LOG');return {content:{input:args.input,chatKey:ctx.chatKey,tag:api.config().tag}};}});
+      api.registerTool({id:'modern',name:'Modern mixed',params:{type:'object',properties:{input:{type:'string'}}},execute(args,ctx){return {ok:true,result:{input:args.input,chatKey:ctx.chatKey}};}});
+      api.registerTool({id:'schema_less',name:'Native schema-less mixed',handler(args,ctx){return {ok:true,result:{input:args.input,chatKey:ctx.chatKey}};}});
+      api.registerTool({id:'old_error',name:'Old error',parameters:{type:'object'},execute(){return {content:'OLD_BUSINESS_ERROR',isError:true};}});
+    }
+    export function promptSections(){return [{id:'age',content:api.config().tag}];}
+  `,{compat:undefined,apiVersion:1,configSchema:{tag:{type:'string'}},settings:{tag:'default'}});
+  const before=fs.readFileSync(path.join(dir,'skill.json'),'utf8'),code=fs.readFileSync(path.join(dir,'index.js'),'utf8');
+  e.plugin('native',`export function setup(ctx){ctx.log.info('NATIVE_LOG');ctx.registerTool({id:'read',name:'Native config',params:{type:'object',properties:{input:{type:'string'}}},execute(args,execution){return {ok:true,result:{input:args.input,chatKey:execution.chatKey,tag:ctx.config.get('tag'),all:ctx.config.all(),onChange:typeof ctx.config.onChange,narrow:!ctx.kernel&&!ctx.registry,storage:typeof ctx.storage.get}};}});}`,{compat:undefined,configSchema:{tag:{type:'string'}},settings:{tag:'native'}});
+  e.config.update({skills:{unmarked:{settings:{tag:'saved-37'}}}});
+  await e.loader.loadAll();assert.equal(e.loader.isActive('unmarked'),true);assert.equal(e.loader.isActive('native'),true);
+  assert.equal((await e.loader.promptSections({chatKey:'group:fixture'})).find(s=>s.owner==='unmarked').content,'saved-37');
+  const r=await e.run([['unmarked__old',{input:'HELLO'}],['unmarked__modern',{input:'MODERN'}],['unmarked__schema_less',{input:'RAW'}],['native__read',{input:'NATIVE'}],['unmarked__old_error',{}]]);
+  const schema=r.requests[0].tools.find(x=>x.function.name==='unmarked__old').function.parameters;assert.deepEqual(schema.required,['input']);
+  assert.deepEqual(payload(r,'unmarked__old'),{input:'HELLO',chatKey:'group:fixture',tag:'saved-37'});
+  assert.deepEqual(payload(r,'unmarked__modern'),{input:'MODERN',chatKey:'group:fixture'});
+  assert.deepEqual(payload(r,'unmarked__schema_less'),{input:'RAW',chatKey:'group:fixture'});
+  assert.deepEqual(payload(r,'native__read'),{input:'NATIVE',chatKey:'group:fixture',tag:'native',all:{tag:'native'},onChange:'function',narrow:true,storage:'function'});
+  assert.equal(tool(r,'unmarked__old_error').toolCall.ok,false);assert.match(tool(r,'unmarked__old_error').content,/OLD_BUSINESS_ERROR/);
+  const details=e.loader.listEntries().find(x=>x.id==='unmarked').compatibility;assert.equal(details.mode,'04');assert.equal(details.automatic,true);assert.ok(details.features.includes('tool.parameters'));assert.ok(details.features.includes('config()'));assert.ok(details.features.includes('log()'));
+  assert.equal(e.loader.listEntries().find(x=>x.id==='native').compatibility.mode,'native');
+  e.config.update({skills:{unmarked:{settings:{tag:'changed-38'}}}});
+  assert.equal((await e.loader.promptSections({})).find(s=>s.owner==='unmarked').content,'changed-38');
+  const retained=e.registry.get('unmarked__old');await e.loader.setEnabled('unmarked',false);assert.equal(e.registry.byOwner('unmarked').length,0);await assert.rejects(()=>retained.execute({},{}),/失效/);
+  await e.loader.setEnabled('unmarked',true);await e.loader.loadDir('skills',dir,{hot:true});assert.equal(e.registry.byOwner('unmarked').length,4);
+  assert.equal(payload(await e.run([['unmarked__old',{input:'RELOADED'}]]),'unmarked__old').tag,'changed-38');
+  assert.equal(fs.readFileSync(path.join(dir,'skill.json'),'utf8'),before);assert.equal(fs.readFileSync(path.join(dir,'index.js'),'utf8'),code);
+  const denied=await e.loader.hostEntry('unmarked').ctx.fetch('https://never-requested.invalid/').then(()=>false,()=>true);assert.equal(denied,true);
+});
+
+test('210 automatic compatibility never retries a failed setup', async t => {
+  const e=environment(t);let calls=0;e.capabilities.register('qa.setup-count','kernel',()=>++calls);
+  e.plugin('broken',`export function setup(api){api.capability('qa.setup-count');api.log('OLD_BEFORE_FAILURE');api.registerTool({id:'partial',name:'Partial',parameters:{type:'object'},execute(){return {content:'no'};}});throw new Error('REAL_SETUP_FAILURE');}`,{compat:undefined});
+  await e.loader.loadAll();assert.equal(calls,1);assert.equal(e.loader.isActive('broken'),false);assert.equal(e.registry.byOwner('broken').length,0);assert.match(e.loader.hostEntry('broken').loadError,/REAL_SETUP_FAILURE/);
+});

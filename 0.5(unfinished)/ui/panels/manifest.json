@@ -542,6 +542,10 @@
         },
         {
           "method": "POST",
+          "path": "/api/local-protocols/login/initial-password"
+        },
+        {
+          "method": "POST",
           "path": "/api/local-protocols/login/refresh"
         },
         {

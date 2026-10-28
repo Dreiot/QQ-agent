@@ -8,6 +8,8 @@ import {spawn} from 'node:child_process';
 import {inspectRuntimeArchive,extractRuntimeArchive,assertPlainTree} from '../../scripts/lib/runtime-archive.mjs';
 import {detectProtocolLayouts,configureProtocolConnection,protocolAccounts} from './adapters.js';
 import {terminateOwnedProtocolProcess} from './process-tree.js';
+import {snowControlUrl} from './control-url.js';
+import {snowInitialPassword,snowBootstrapIdentity} from './initial-password.js';
 
 const PROVIDERS=[
   {id:'napcat',title:'NapCat',url:'https://github.com/NapNeko/NapCatQQ/releases'},
@@ -97,16 +99,19 @@ export function createLocalProtocols({appRoot,dataDir,config,bus,log=console,env
     }catch(error){if(inside(path.resolve(cache),path.resolve(stage))&&path.basename(stage).startsWith('.stage-'))await fs.promises.rm(stage,{recursive:true,force:true});throw error;}
   }
   async function filesIn(directory){const names=[];async function walk(dir,prefix='',depth=0){for(const entry of await fs.promises.readdir(dir,{withFileTypes:true})){if(entry.isSymbolicLink())fail('协议端不能包含链接');if(entry.isFile())names.push(prefix+entry.name);else if(entry.isDirectory()&&depth<7&&!/^(node_modules|logs?|cache|data)$/i.test(entry.name))await walk(path.join(dir,entry.name),prefix+entry.name+'/',depth+1);if(names.length>MAX_FILES)fail('协议端文件过多');}}await walk(directory);return names;}
-  function ingestOutput(record,chunk){
+  function ingestOutput(record,chunk,stream){
     if(runtime!==record||closed)return;const text=String(chunk);output=(output+text).slice(-65536);record.outputVersion++;
-    record.lineBuffer=(record.lineBuffer+text).slice(-8192);
-    const lines=record.lineBuffer.split(/\r?\n/);record.lineBuffer=lines.pop();
+    const lines=(record.lineBuffers[stream]+text).split(/\r?\n/);record.lineBuffers[stream]=lines.pop().slice(-8192);
     for(const line of lines){
-      if(!/web\s*ui/i.test(line))continue;
+      if(record.provider==='snowluma'){
+        const password=snowInitialPassword(line);
+        if(password){const identity=snowBootstrapIdentity(record.physical);record.initialCredential=identity?{password,identity}:null;}
+      }
+      if(record.provider==='snowluma'||record.webUiUrl||!/web\s*ui/i.test(line))continue;
       for(const match of line.matchAll(/https?:\/\/[^\s<>"']+/g))try{
         const url=new URL(match[0]);if(url.hostname==='0.0.0.0')url.hostname='127.0.0.1';if(url.hostname==='[::]')url.hostname='[::1]';if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname)||url.username||url.password)continue;
-        if([record.httpPort,record.wsPort].includes(Number(url.port)))continue;
-        url.search='';url.hash='';record.webUiUrl=url.href;
+        if([record.httpPort,record.wsPort].includes(Number(url.port))||!['/','/webui','/webui/'].includes(url.pathname))continue;
+        url.search='';url.hash='';record.webUiUrl=url.href;break;
       }catch{/* Ignore decoration around a log URL. */}
     }
     if(!outputTimer){outputTimer=setTimeout(()=>{outputTimer=null;notify();},150);outputTimer.unref?.();}
@@ -130,7 +135,7 @@ export function createLocalProtocols({appRoot,dataDir,config,bus,log=console,env
     await scan();const item=entries.get(id);if(!item)fail('未找到此发行包，请刷新检测结果',404);if(!item.ready)fail(item.reason||'此包无法直接运行');
     if(runtime?.orphaned)fail(runtime.error,409);
     if(active()){if(runtime.id===id&&runtime.status==='running'&&(!account||account===runtime.account))return snapshot();fail('请先停止当前协议端，再切换发行包或账号',409);}
-    const record={id,instanceId:crypto.randomUUID(),provider:item.provider,status:'preparing',account:account||'',error:null,outputVersion:0,lineBuffer:'',webUiUrl:null,child:null};runtime=record;output='';notify();
+    const record={id,instanceId:crypto.randomUUID(),provider:item.provider,status:'preparing',account:account||'',error:null,outputVersion:0,lineBuffers:{stdout:'',stderr:''},initialCredential:null,webUiUrl:null,child:null};runtime=record;output='';notify();
     try{
       const physical=await packageRoot(item);record.physical=physical;if(closed)fail('应用已停止',409);
       // Revalidate extracted directories too; the selected entry is never a
@@ -157,12 +162,13 @@ export function createLocalProtocols({appRoot,dataDir,config,bus,log=console,env
       if(closed)fail('应用已停止',409);
       const childEnv={...env};for(const key of Object.keys(childEnv))if(/^(NODE_OPTIONS|NODE_PATH|ELECTRON_RUN_AS_NODE|QQ_AGENT_|SNOWLUMA_ACCEPT_)/i.test(key))delete childEnv[key];
       if(item.provider==='napcat')childEnv.NAPCAT_WORKDIR=path.join(physical,'napcat');
+      if(item.provider==='snowluma')record.webUiUrl=snowControlUrl(physical,childEnv);
       record.httpPort=httpPort;record.wsPort=wsPort;record.account=chosenAccount||'';
       if(options.deferConnection)record.preparedConnection={httpPort,wsPort,token,accountId:record.account,
         ...(genericDeferred?{existingAccounts:[...(layout.accounts||[])]}:{})};
       const args=[entry];if(item.provider==='napcat'&&record.account)args.push('-q',record.account);
       const child=spawnImpl(executable,args,{cwd:physical,env:childEnv,windowsHide:true,detached:platform!=='win32',stdio:['ignore','pipe','pipe']});record.child=child;record.treePending=Number.isSafeInteger(child.pid)&&child.pid>0;record.updatePackage(child.pid??null);
-      child.stdout?.on('data',chunk=>ingestOutput(record,chunk));child.stderr?.on('data',chunk=>ingestOutput(record,chunk));
+      child.stdout?.on('data',chunk=>ingestOutput(record,chunk,'stdout'));child.stderr?.on('data',chunk=>ingestOutput(record,chunk,'stderr'));
       child.on('error',()=>{if(runtime===record){record.status='error';record.error='协议端进程未能启动，请检查发行包和运行环境';notify();}});
       child.once('exit',(code,signal)=>{
         // An exited launcher does not prove that all its workers have exited.
@@ -189,6 +195,7 @@ export function createLocalProtocols({appRoot,dataDir,config,bus,log=console,env
   }
   async function halt(){
     const record=runtime,child=record?.child;
+    if(record)record.initialCredential=null;
     if(record?.treePending&&(child?.exitCode!=null||child?.signalCode!=null))retainUncertainTree(record);
     if(record?.orphaned){record.updatePackage?.(child?.pid??null,true);fail(record.error,409);}
     if(!child?.pid||!record.treePending&&(child.exitCode!=null||child.signalCode!=null)){record?.releasePackage?.();if(record&&record.status!=='error')record.status='stopped';notify();return snapshot();}
@@ -233,6 +240,12 @@ export function createLocalProtocols({appRoot,dataDir,config,bus,log=console,env
   // package snapshot or plugin SDK; each launch has a fresh identity.
   function loginContext(){return !closed&&runtime?.status==='running'?{id:runtime.id,instanceId:runtime.instanceId,provider:runtime.provider,root:runtime.physical,webUiUrl:runtime.webUiUrl,account:runtime.account,httpPort:runtime.httpPort,wsPort:runtime.wsPort,
     ...(runtime.preparedConnection?{preparedConnection:{...runtime.preparedConnection}}:{})}:null;}
+  function initialPassword(instanceId,{reveal=false}={}){
+    const record=runtime;
+    if(closed||!record||record.provider!=='snowluma'||record.status!=='running'||record.instanceId!==instanceId||!record.initialCredential)return{available:false};
+    if(snowBootstrapIdentity(record.physical)!==record.initialCredential.identity){record.initialCredential=null;return{available:false};}
+    return{available:true,...(reveal?{password:record.initialCredential.password}:{})};
+  }
   function commitLoginConnection(instanceId,account,{httpPort,wsPort,token}){
     if(closed||operation||runtime?.status!=='running'||runtime.instanceId!==instanceId||!['snowluma','napcat'].includes(runtime.provider))fail('协议端实例已变化，请重新选择账号',409);
     if(!/^\d{5,10}$/.test(account)||![httpPort,wsPort].every(value=>Number.isInteger(value)&&value>0&&value<65536)||httpPort===wsPort||!/^[a-f0-9]{64}$/.test(token))fail('账号连接参数无效');
@@ -241,8 +254,8 @@ export function createLocalProtocols({appRoot,dataDir,config,bus,log=console,env
       if(!prepared||prepared.accountId&&prepared.accountId!==account||prepared.httpPort!==httpPort||prepared.wsPort!==wsPort||prepared.token!==token)fail('协议端准备的账号连接已变化，请重新接入',409);
     }
     runtime.account=account;runtime.httpPort=httpPort;runtime.wsPort=wsPort;
-    config.update({onebot:{httpUrl:`http://127.0.0.1:${httpPort}`,wsUrl:`ws://127.0.0.1:${wsPort}`,accessToken:token,httpAccessToken:token},localProtocols:{selectedId:runtime.id,account}});
+    config.update({onebot:{httpUrl:`http://127.0.0.1:${httpPort}`,wsUrl:`ws://127.0.0.1:${wsPort}`,accessToken:token,httpAccessToken:token,expectedSelfId:account},localProtocols:{selectedId:runtime.id,account}});
     bus?.emit('status',{configUpdated:true});notify();
   }
-  return {root,start,close,scan,snapshot,launch:(id,account,options)=>exclusive(()=>launch(id,account,options)),stop:()=>exclusive(halt),saveSettings,output:()=>({text:output}),loginContext,commitLoginConnection};
+  return {root,start,close,scan,snapshot,launch:(id,account,options)=>exclusive(()=>launch(id,account,options)),stop:()=>exclusive(halt),saveSettings,output:()=>({text:output}),loginContext,initialPassword,commitLoginConnection};
 }

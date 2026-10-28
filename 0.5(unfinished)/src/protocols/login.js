@@ -58,7 +58,8 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
   function abortView(v){if(!v)return;v.closed=true;clearTimeout(v.pendingTimer);clearTimeout(v.streamRetry);v.stream?.abort();v.stream=null;for(const controller of v.controllers)controller.abort();v.controllers.clear();}
   function invalidate(){++openEpoch;abortView(view);view=null;authCache=null;pending=null;clearTimeout(eventTimer);eventTimer=null;}
   function state(v,patch={}){
-    return{sessionId:v?.id||'',provider:v?.ctx?.provider||null,source:v?.ctx?.source||null,stage:'unavailable',qrImage:'',account:null,processes:[],error:'',message:'',canRefresh:false,needsNative:false,needsCredentials:false,needsAddress:false,needsTotp:false,pollAfterMs:0,nativeUrl:v?.ctx?.webUiUrl||null,...(v?.workspaceId?{workspaceId:v.workspaceId}:{}),...patch};
+    const hasInitialPassword=v?.ctx?.source==='managed'&&v.ctx.provider==='snowluma'&&(patch.needsCredentials===true||patch.needsNative===true)&&localProtocols?.initialPassword?.(v.ctx.instanceId)?.available===true;
+    return{sessionId:v?.id||'',provider:v?.ctx?.provider||null,source:v?.ctx?.source||null,stage:'unavailable',qrImage:'',account:null,processes:[],error:'',message:'',canRefresh:false,needsNative:false,needsCredentials:false,needsAddress:false,needsTotp:false,hasInitialPassword,pollAfterMs:0,nativeUrl:v?.ctx?.webUiUrl||null,...(v?.workspaceId?{workspaceId:v.workspaceId}:{}),...patch};
   }
   async function fetchLocal(v,url,options={},max=2*1024*1024){
     assertCurrent(v);const controller=new AbortController();v.controllers.add(controller);
@@ -187,7 +188,7 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
       if(workspace?.workspaceId){v.workspaceId=workspace.workspaceId;v.attachedAccount=target.accountId;}
       if(workspace?.workspaceId&&workspace.workspaceId!=='primary'){/* A separate worker owns this connection; the primary QQ keeps running. */}
       else if(v.ctx.source==='managed')localProtocols.commitLoginConnection(v.ctx.instanceId,target.accountId,target);
-      else{committing=true;try{config.update({onebot:{httpUrl:`http://127.0.0.1:${target.httpPort}`,wsUrl:`ws://127.0.0.1:${target.wsPort}`,accessToken:target.token,httpAccessToken:target.token}});externalIdentity.signature=onebotKey();externalIdentity.account=target.accountId;versionCache={signature:onebotKey(),provider:'snowluma',at:Date.now()};}finally{committing=false;}bus?.emit('status',{configUpdated:true});}
+      else{committing=true;try{config.update({onebot:{httpUrl:`http://127.0.0.1:${target.httpPort}`,wsUrl:`ws://127.0.0.1:${target.wsPort}`,accessToken:target.token,httpAccessToken:target.token,expectedSelfId:target.accountId}});externalIdentity.signature=onebotKey();externalIdentity.account=target.accountId;versionCache={signature:onebotKey(),provider:'snowluma',at:Date.now()};}finally{committing=false;}bus?.emit('status',{configUpdated:true});}
       v.ctx.account=target.accountId;v.snowTarget=target;v.verifiedSnow=target.accountId;pending=null;
     }catch(error){assertCurrent(v);if(target.registering){pending=null;v.pendingError='QQ 连接已核验，但账号工作区未能就绪。请检查账号连接状态后重试。';notify(v);return;}if(error.status===409)throw error;}finally{target.settling=false;}
   }
@@ -201,7 +202,8 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
     const prepared=v.ctx.source==='managed'&&v.ctx.provider==='napcat'&&v.ctx.preparedConnection;
     // Legacy Nap reads remain read-only. Only an explicit deferred launch
     // owns credentials that can be handed to a new isolated account worker.
-    if(!prepared||result.stage!=='connected')return result;
+    if(result.stage!=='connected')return result;
+    if(!prepared){if(typeof getAccounts!=='function')return result;const accounts=await getAccounts();assertCurrent(v);const row=accounts?.accounts?.find(row=>row.id===(v.workspaceId||'primary')&&String(row.accountId)===String(result.account?.id)&&row.connected===true&&row.wanted!==false);if(row){v.workspaceId=row.id;return result;}return{...result,stage:'initializing',account:null,message:'QQ 已登录，但 QQA 收发连接尚未就绪；请核对地址与令牌。',pollAfterMs:1000};}
     const accountId=String(result.account?.id||''),expected=prepared.accountId||v.ctx.account||'';
     if(!/^\d{5,10}$/.test(accountId)||expected&&accountId!==expected)return{...result,stage:'error',account:null,error:'登录的 QQ 与所选账号不一致，请切换至所选账号后重试。',pollAfterMs:1500};
     // A generic QR flow prepares only the template for a new QQ. A remembered
@@ -209,8 +211,8 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
     if(!expected&&Array.isArray(prepared.existingAccounts)&&prepared.existingAccounts.includes(accountId))return{...result,stage:'error',account:null,error:'这是已保存的 QQ，请返回选择该账号后连接',pollAfterMs:0};
     if(![prepared.httpPort,prepared.wsPort].every(port=>Number.isInteger(port)&&port>0&&port<65536)||prepared.httpPort===prepared.wsPort||!/^[a-f0-9]{64}$/.test(prepared.token||''))throw bad('协议端准备的账号连接无效，请重新启动协议端',409);
     const signature=digest(JSON.stringify({...prepared,accountId}));
-    if(v.napVerified===signature&&v.workspaceId&&v.attachedAccount===accountId)return result;
     const verifying=()=>({...result,stage:'initializing',account:null,message:'登录已完成，正在验证 QQ 连接…',pollAfterMs:700});
+    if(v.napVerified===signature&&v.workspaceId&&v.attachedAccount===accountId){if(typeof getAccounts!=='function')return result;const accounts=await getAccounts();assertCurrent(v);return accounts?.accounts?.some(row=>row.id===v.workspaceId&&String(row.accountId)===accountId&&row.connected===true&&row.wanted!==false)?result:verifying();}
     const target={accountId,nickname:result.account.nickname||'',httpPort:prepared.httpPort,wsPort:prepared.wsPort,token:prepared.token};
     const body=await fetchLocal(v,`http://127.0.0.1:${target.httpPort}/get_login_info`,{headers:{Authorization:'Bearer '+target.token},timeoutMs:1500},65536);
     if(body.status!=='ok'||body.retcode!==0||String(body.data?.user_id)!==accountId)return verifying();
@@ -221,6 +223,7 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
     assertCurrent(v);
     if(!workspace?.workspaceId||workspace.workspaceId==='primary')localProtocols.commitLoginConnection(v.ctx.instanceId,accountId,target);
     v.workspaceId=workspace?.workspaceId||'primary';v.attachedAccount=accountId;v.napVerified=signature;v.ctx.account=accountId;
+    if(typeof getAccounts==='function'){const accounts=await getAccounts();assertCurrent(v);if(!accounts?.accounts?.some(row=>row.id===v.workspaceId&&String(row.accountId)===accountId&&row.connected===true&&row.wanted!==false))return verifying();}
     return result;
   }
   async function read(v){
@@ -269,14 +272,21 @@ export function createProtocolLogin({config,localProtocols,bus,fetchImpl=globalT
     const httpPort=await freePort();let wsPort=await freePort();while(wsPort===httpPort)wsPort=await freePort();assertCurrent(v);
     let prepared;try{prepared=await prepareSnowConnection({request:requestFor(v),credential,accountId:process.accountId,httpPort,wsPort,token:crypto.randomBytes(32).toString('hex'),reuseExisting:true,verifySaved:true});assertCurrent(v);}catch(error){assertCurrent(v);v.pendingError=error instanceof Error&&error.name==='NativeLoginError'?error.message:'未能保存此 QQ 的连接配置，请刷新后重试。';notify(v);throw bad(v.pendingError,502);}
     const target={key:v.ctx.key,accountId:process.accountId,nickname:process.nickname,httpPort:prepared.httpPort,wsPort:prepared.wsPort,token:prepared.token,rollback:prepared.rollback};pending=target;
-    try{if(process.status==='online'){const latest=await readNativeLogin({provider:'snowluma',request:requestFor(v),credential});assertCurrent(v);if(!latest.processes.some(item=>item.pid===body.pid&&item.status==='online'&&item.accountId===process.accountId))throw bad('所选 QQ 账号已变化，请重新选择',409);}else await injectNativeProcess({request:requestFor(v),credential,pid:body.pid,expectedAccountId:process.accountId});assertCurrent(v);await settlePending(v);followPending(v);notify(v);}
+    try{if(process.status==='online'){const latest=await readNativeLogin({provider:'snowluma',request:requestFor(v),credential});assertCurrent(v);if(!latest.processes.some(item=>item.pid===body.pid&&item.status==='online'&&item.accountId===process.accountId))throw bad('所选 QQ 账号已变化，请重新选择',409);if(!await probeSnow(v,target))await injectNativeProcess({request:requestFor(v),credential,pid:body.pid,expectedAccountId:process.accountId,refreshConnected:true});}else await injectNativeProcess({request:requestFor(v),credential,pid:body.pid,expectedAccountId:process.accountId});assertCurrent(v);await settlePending(v);followPending(v);notify(v);}
     catch(error){if(pending===target)pending=null;v.pendingError='未能接入所选 QQ 账号，请刷新列表后重试';if(current(v)&&prepared.rollback)try{await prepared.rollback();}catch{v.pendingError='接入未完成，且未能恢复原连接配置，请打开协议端检查。';}notify(v);throw bad(v.pendingError,502);}
   });}
   async function get(query={}){const v=await resolveView(query);if(query.nativeOnly==='1')return state(v);v.hidden=false;if(v.authResult){const value=v.authResult;v.authResult=null;return value;}return read(v);}
+  async function initialPassword(body){
+    const v=await resolveView({sessionId:body.sessionId});assertCurrent(v);
+    if(v.hidden||v.ctx.source!=='managed'||v.ctx.provider!=='snowluma')throw bad('此窗口没有可复制的初始密码',409);
+    const value=localProtocols?.initialPassword?.(v.ctx.instanceId,{reveal:true});
+    if(!value?.available||!value.password)throw bad('初始密码已失效或未检测到，请使用当前管理密码',409);
+    return{password:value.password};
+  }
   function closeView(body={}){if(view?.id===body.sessionId){++openEpoch;pending=null;abortView(view);view=null;clearTimeout(eventTimer);eventTimer=null;}return{ok:true};}
   function visibility(body={}){if(view?.id===body.sessionId&&body.visible===false){view.hidden=true;clearTimeout(view.pendingTimer);view.pendingTimer=null;clearTimeout(view.streamRetry);view.streamRetry=null;view.stream?.abort();view.stream=null;}return{ok:true};}
   const off=config.onChange?.(()=>{if(!committing&&view?.ctx.source==='external'&&externalIdentity?.signature!==onebotKey())invalidate();});
   const offRuntime=bus?.on?.('local-protocols',()=>{if(view?.ctx.source!=='managed')return;const ctx=localProtocols?.loginContext?.();if(!ctx||ctx.instanceId!==view.ctx.instanceId)invalidate();},{internal:true});
   function close(){closed=true;invalidate();qrCache.clear();off?.();offRuntime?.();}
-  return{get,connect,refresh,inject,closeView,visibility,close};
+  return{get,connect,refresh,inject,initialPassword,closeView,visibility,close};
 }

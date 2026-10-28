@@ -33,8 +33,8 @@ function inspect(body, expected) {
   const rgba = value => { ctx.clearRect(0,0,1,1);ctx.fillStyle=value;ctx.fillRect(0,0,1,1);return [...ctx.getImageData(0,0,1,1).data]; };
   const nodeColor = selector => { const node = doc.querySelector(selector);return node ? getComputedStyle(node).color : null; };
   const card = doc.querySelector('.settings-section:not([hidden])');
-  const primary = doc.querySelector('#save');
-  const icon = doc.querySelector('#nav button.active .qq-icon') || doc.querySelector('.component-preview-icons .qq-icon');
+  const primary = doc.querySelector('.appearance-visual-entry button.primary');
+  const icon = doc.querySelector('#nav button.active .qq-icon') || doc.querySelector('#settings-sidebar a[aria-current="page"] .qq-icon') || doc.querySelector('.component-preview-icons .qq-icon');
   const result = {
     root: Object.fromEntries(expected.keys.map(key => [key, rootStyle.getPropertyValue(key).trim()])),
     body: Object.fromEntries(expected.keys.map(key => [key, bodyStyle.getPropertyValue(key).trim()])),
@@ -49,7 +49,7 @@ function inspect(body, expected) {
     primaryPaint: primary ? getComputedStyle(primary).backgroundColor : null,
     expectedPrimaryPaint:color(expected.scheme.accent),
     iconColor:icon?getComputedStyle(icon).color:null,
-    expectedIconColor:color(expected.scheme.accent),
+    expectedIconColor:doc.querySelector('#nav')?color(expected.scheme.accent):icon?getComputedStyle(icon.closest('button,a')||icon.parentElement).color:null,
     safeIcon:!!icon&&!icon.querySelector('script,img,foreignObject,[onload],[onerror]'),
   };
   reference.remove();return result;
@@ -77,15 +77,15 @@ try {
   await page.goto(`http://127.0.0.1:${port}/?token=${token}`);
   await page.locator('#nav button[data-panel=settings]').click();
   const frame = page.frameLocator('#panel-host iframe');
-  await frame.locator('#status').filter({ hasText: '配置已读取' }).waitFor();
-  await settingsSection(frame,'interface');
-  for (const mode of ['custom:bright', 'custom:dark', 'light', 'dark', 'custom:bright']) {
+  await frame.locator('#settings-sidebar a[data-target=appearance]').waitFor();
+  await settingsSection(frame,'appearance');
+  for (const mode of ['custom:dark', 'light', 'dark', 'custom:bright']) {
     // Catch immediately: a paint/assertion failure closes the page in finally,
     // and its pending response waiter must not hide that original failure.
     const savedResponse = page.waitForResponse(response => isSettingsSaveRequest(response.request()) && settingsSavePatch(response.request())?.ui?.uikit?.mode === mode).then(response => ({ response }), error => ({ error }));
-    await frame.locator('#field-ui-uikit-mode').selectOption(mode);
-    await frame.locator('#field-ui-uikit-mode').hover();
-    const scheme = resolveScheme({ ...uikit, mode }), expected = { scheme, keys: colorKeys };
+    const schemeChoice=frame.locator('#field-ui-uikit-mode + .settings-choice-cards [data-value="'+mode+'"]');
+    await schemeChoice.click();await schemeChoice.hover();
+    const scheme = {...resolveScheme({ ...uikit, mode }),styleMode:resolveScheme(uikit).styleMode}, expected = { scheme, keys: colorKeys };
     await page.waitForFunction(bg => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === bg, scheme.bg);
     for (let i = 0; i < 100 && await frame.locator('html').evaluate(root => getComputedStyle(root).getPropertyValue('--bg').trim()) !== scheme.bg; i++) await page.waitForTimeout(10);
     const shell = await page.locator('body').evaluate(inspect, expected), panel = await frame.locator('body').evaluate(inspect, expected);
@@ -103,7 +103,7 @@ try {
     assert.ok(panel.cardLineWidth>0, `${mode}: card retains a visible section boundary`);
     assert.equal(panel.primaryPaint, panel.expectedPrimaryPaint, `${mode}: actual button uses the selected accent`);
     for(const state of [shell,panel]) {
-      assert.equal(state.iconColor,state.expectedIconColor,`${mode}: vector/masked icon inherits user accent`);
+      assert.equal(state.iconColor,state.expectedIconColor,`${mode}: icon inherits the currently themed control foreground`);
       assert.ok(state.safeIcon,`${mode}: generated/shared icon contains no executable metadata`);
     }
     // Readiness labels now live in the rail; inspect their actual painted background.
@@ -114,7 +114,7 @@ try {
     const saved = await savedResponse;
     if (saved.error) throw saved.error;
     assert.equal(saved.response.status(), 200, `${mode}: chosen scheme receives a real successful save response`);
-    await frame.locator('#status').filter({ hasText: /^已保存/ }).waitFor();
+    await frame.locator('.settings-save-toast[data-state=saved]').waitFor({state:'attached'});
     assert.equal(kernel.config.get().ui.uikit.mode, mode);
   }
   console.log('· A newly mounted opaque panel receives the saved theme through its ready handshake');
@@ -122,7 +122,7 @@ try {
   await page.locator('#nav button[data-panel=usage]').click();
   await frame.locator('#metrics .metric').first().waitFor();
   await page.locator('#nav button[data-panel=settings]').click();
-  await frame.locator('#status').filter({hasText:'配置已读取'}).waitFor();
+  await frame.locator('#settings-sidebar a[data-target=appearance]').waitFor();
   const remounted=await frame.locator('body').evaluate(body=>{
     const root=body.ownerDocument.documentElement;
     return {root:getComputedStyle(root).getPropertyValue('--bg').trim(),body:getComputedStyle(body).getPropertyValue('--bg').trim()};

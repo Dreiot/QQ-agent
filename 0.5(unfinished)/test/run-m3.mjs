@@ -117,6 +117,7 @@ files.push('brand-emblem-personalization-test.mjs','protocol-adapters-test.mjs',
 files.push('native-login-client-test.mjs','protocol-login-test.mjs','protocol-connection-test.mjs','protocol-login-ui-test.mjs','protocol-login-roundtrip-test.mjs');
 files.push('accounts-manager-test.mjs','account-gateway-test.mjs','account-extension-isolation-test.mjs','account-scope-test.mjs','account-switcher-ui-test.mjs','multi-account-roundtrip-test.mjs');
 files.push('account-scope-browser-test.mjs');
+files.push('account-catalogue-rpc-test.mjs');
 files.push('account-navigation-browser-test.mjs','panel-content-ready-test.mjs','account-transition-browser-test.mjs');
 files.push('account-metadata-stream-test.mjs','account-reset-quiescence-test.mjs','account-control-rpc-test.mjs');
 files.push('extension-online-update-test.mjs','extension-online-update-ui-test.mjs');

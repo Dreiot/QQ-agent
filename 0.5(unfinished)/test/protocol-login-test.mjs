@@ -29,7 +29,7 @@ function assertPublic(value) {
     assert.equal(text.includes(secret), false, `public state leaked a fixture secret`);
   }
 }
-function makeHarness({ provider = 'napcat', external = false, onlineAccount = '', nativeGate = null, verifyResult = true, onVerifiedAccount = null, preparedNap = false, canonicalSnow = false, getAccounts = null } = {}) {
+function makeHarness({ provider = 'napcat', external = false, onlineAccount = '', nativeGate = null, verifyResult = true, onVerifiedAccount = null, preparedNap = false, canonicalSnow = false, getAccounts = null, initialPassword = () => ({available:false}) } = {}) {
   let settings = { onebot: { httpUrl: 'http://127.0.0.1:19101', wsUrl: 'ws://127.0.0.1:19102', accessToken: 'fixture-onebot-token', httpAccessToken: 'fixture-onebot-token' } };
   const changes = new Set(), listeners = new Map(), events = [], calls = [], commits = [], written = [], verifications = [], streamControllers = [];
   let managed = external ? null : { id: 'fixture-package', instanceId: 'fixture-instance', provider, source: 'managed', root,
@@ -45,7 +45,7 @@ function makeHarness({ provider = 'napcat', external = false, onlineAccount = ''
   const bus = { emit(name, body) { events.push({ name, body }); for (const fn of listeners.get(name) || []) fn(body); },
     on(name, fn) { const set = listeners.get(name) || new Set(); set.add(fn); listeners.set(name, set); return () => set.delete(fn); } };
   const config = { get: () => settings, update(patch) { settings = { ...settings, ...patch }; for (const fn of changes) fn(settings); }, onChange(fn) { changes.add(fn); return () => changes.delete(fn); } };
-  const localProtocols = { loginContext: () => managed, commitLoginConnection(instanceId, selectedAccount, target) {
+  const localProtocols = { loginContext: () => managed, initialPassword, commitLoginConnection(instanceId, selectedAccount, target) {
     assert.equal(instanceId, managed.instanceId); commits.push({ instanceId, account: selectedAccount, target }); managed.account = selectedAccount;
     config.update({ onebot: { httpUrl: `http://127.0.0.1:${target.httpPort}`, wsUrl: `ws://127.0.0.1:${target.wsPort}`, accessToken: target.token, httpAccessToken: target.token } });
   } };
@@ -91,7 +91,7 @@ function makeHarness({ provider = 'napcat', external = false, onlineAccount = ''
         const online = processes.some(item => item.status === 'online');
         response = json({ success: configSaved, saved: configSaved, applied: online && configSaved, online });
       } else if (url.pathname === `/api/config/${account}`) response = json({ config: structuredClone(nativeConfig) });
-      else if (url.pathname === '/api/processes/101/load') {
+      else if (url.pathname === '/api/processes/101/load'||url.pathname === '/api/processes/101/refresh') {
         processes = processes.map(item => ({ ...item, injected: true, connected: true, loggedIn: true, uin: item.account.uin, status: 'online' }));
         response = json({ success: true, process: processes[0] });
       } else assert.fail(`unexpected fake endpoint ${url.pathname}`);
@@ -118,6 +118,28 @@ function makeHarness({ provider = 'napcat', external = false, onlineAccount = ''
 test('control addresses accept only explicit loopback web roots', async () => {
   for (const address of ['http://127.0.0.1:5099/', 'http://localhost:6099/webui/', 'http://[::1]:6099/webui', 'https://localhost/']) assert.ok(protocolControlUrl(address));
   for (const address of ['https://example.test/', 'http://127.0.0.1.evil.test/', 'http://user:password@localhost/', 'http://localhost/?token=secret', 'http://localhost/#secret', 'http://localhost/api/', 'ws://localhost/', 'file:///C:/secret', '/api/']) assert.equal(protocolControlUrl(address), null);
+});
+
+test('bootstrap state exposes availability only; copying requires a current visible managed SnowLuma session', async () => {
+  const bootstrap='c1d2e3f405162738';let available=true,reveals=0;
+  const h=makeHarness({provider:'snowluma',initialPassword:(instanceId,{reveal=false}={})=>{
+    assert.equal(instanceId,'fixture-instance');if(reveal)reveals++;return{available,...(available&&reveal?{password:bootstrap}:{})};
+  }});
+  try{
+    const state=await h.open();assert.equal(state.hasInitialPassword,true);assert.equal(JSON.stringify(state).includes(bootstrap),false);assert.equal(reveals,0);
+    await assert.rejects(h.login.initialPassword({sessionId:'stale'}),error=>error.status===409);
+    assert.deepEqual(await h.login.initialPassword({sessionId:state.sessionId}),{password:bootstrap});assert.equal(reveals,1);
+    h.login.visibility({sessionId:state.sessionId,visible:false});await assert.rejects(h.login.initialPassword({sessionId:state.sessionId}),error=>error.status===409);
+    await h.login.get({sessionId:state.sessionId});available=false;
+    assert.equal((await h.login.get({sessionId:state.sessionId})).hasInitialPassword,false);
+    await assert.rejects(h.login.initialPassword({sessionId:state.sessionId}),error=>error.status===409);
+    h.login.closeView({sessionId:state.sessionId});await assert.rejects(h.login.initialPassword({sessionId:state.sessionId}),error=>error.status===409);
+    assert.equal(JSON.stringify(h.events).includes(bootstrap),false);assert.equal(h.calls.length,0,'copying does not attempt login or accept agreements');
+  }finally{h.login.close();}
+  for(const options of [{provider:'napcat'},{provider:'snowluma',external:true}]){
+    const h=makeHarness({...options,initialPassword:()=>assert.fail('other sources never read the bootstrap credential')});
+    try{const state=await h.open();assert.equal(state.hasInitialPassword,false);await assert.rejects(h.login.initialPassword({sessionId:state.sessionId}),error=>error.status===409);}finally{h.login.close();}
+  }
 });
 
 test('managed Nap auto-authenticates once and returns only an encoded QR', async () => {
@@ -316,6 +338,7 @@ test('already online Snow target still requires matching HTTP and verified WS id
       const initial = await h.open(); await h.login.connect({ sessionId: initial.sessionId, password }); const old = structuredClone(h.config.get());
       const state = await h.login.inject({ sessionId: initial.sessionId, pid: 101 });
       assert.equal(h.calls.some(call => call.url.pathname.endsWith('/load')), false);
+      assert.equal(h.calls.some(call => call.url.pathname.endsWith('/refresh')), true,'an online native bridge with failed endpoint proof must be reconciled');
       assert.equal(h.commits.length, 0); assert.deepEqual(h.config.get(), old); assert.equal(state.stage, 'initializing'); assert.equal(state.account, null);
     } finally { h.login.close(); }
   }
@@ -547,6 +570,13 @@ test('a concurrent status GET cannot register the same pending account twice',as
  try{const initial=await h.open();await h.login.connect({sessionId:initial.sessionId,password});const injection=h.login.inject({sessionId:initial.sessionId,pid:101});await started;await h.login.get({sessionId:initial.sessionId});assert.equal(attempts,1);release();assert.equal((await injection).stage,'connected');assert.equal(attempts,1);}finally{release?.();h.login.close();}
 });
 
+test('Nap native login cannot claim QQA success until its actual workspace is connected',async()=>{
+  let ready=false,registrations=0;const h=makeHarness({onlineAccount:account,preparedNap:true,getAccounts:async()=>({accounts:[{id:'verified-child',accountId:account,connected:ready,wanted:true}]}),onVerifiedAccount:async()=>{registrations++;return{workspaceId:'verified-child'};}});
+  try{let state=await h.open();assert.equal(state.stage,'initializing');assert.equal(state.account,null);state=await h.login.get({sessionId:state.sessionId});assert.equal(state.stage,'initializing');assert.equal(registrations,1);ready=true;state=await h.login.get({sessionId:state.sessionId});assert.equal(state.stage,'connected');assert.equal(state.account.id,account);ready=false;state=await h.login.get({sessionId:state.sessionId});assert.equal(state.stage,'initializing');assert.equal(state.account,null);}finally{h.login.close();}
+});
+test('manual Nap native login also waits for its actual QQA connection rather than only the QR login',async()=>{
+  let connected=false;const h=makeHarness({onlineAccount:account,getAccounts:async()=>({accounts:[{id:'primary',accountId:account,connected,wanted:true}]})});try{let state=await h.open();assert.equal(state.stage,'initializing');assert.equal(state.account,null);connected=true;state=await h.login.get({sessionId:state.sessionId});assert.equal(state.stage,'connected');assert.equal(state.workspaceId,'primary');connected=false;state=await h.login.get({sessionId:state.sessionId});assert.equal(state.stage,'initializing');assert.equal(state.account,null);}finally{h.login.close();}
+});
 let passed = 0;
 const failures = [];
 try {

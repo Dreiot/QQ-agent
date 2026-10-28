@@ -1,4 +1,4 @@
-import {request,onLeave} from '/panels/panel-client.js';
+import {request,onLeave} from './panel-client.js';
 
 const MIN=180,MAX=520,DEFAULT=288,GAP=18,DETAIL_MIN=320;
 const clamp=value=>Math.round(Math.min(MAX,Math.max(MIN,Number(value)||DEFAULT)));

@@ -7,9 +7,10 @@ export function createOneBotConnectionResolver() {
     const source = config.onebot ?? {};
     const value = key => typeof source[key] === 'string' ? source[key] : '';
     const result = { wsUrl: value('wsUrl'), httpUrl: value('httpUrl'), accessToken: value('accessToken'),
-      httpToken: value('httpAccessToken'), mode: 'manual', expectedSelfId: '', accountId: '',
+      httpToken: value('httpAccessToken'), mode: 'manual', expectedSelfId: value('expectedSelfId'), accountId: value('expectedSelfId'),
       candidateScope: 'onebot', scopedCredentials: true, connectionError: null, connectionCode: null };
     try {
+      if(result.expectedSelfId&&!/^[0-9]{5,10}$/.test(result.expectedSelfId))throw Error('此账号的连接身份无效，请重新接入 QQ');
       const endpoint = (value, protocols) => {
         const url = new URL(value);
         if (!protocols.includes(url.protocol) || url.username || url.password || url.search || url.hash || /[\x00-\x20\\]/.test(value)) throw new Error('OneBot 地址无效；请单独填写令牌，不要在地址中包含凭据、查询参数或片段');

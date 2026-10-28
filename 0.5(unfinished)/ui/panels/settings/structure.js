@@ -24,7 +24,7 @@ export const canonicalSettingsSection = id => {
   return {api:'models',allow:'access',wake:'chat',send:'chat',active:'chat',prices:'models',uikit:'appearance'}[key] || key;
 };
 
-export function composeSettingsStructure({sections,host,read,write,request,save,reload,activityDraft,commitActivity,getProviders=()=>[],onActivityChange=()=>{},onIdle=()=>{},onEditorClosed=()=>{},doc=host.ownerDocument}) {
+export function composeSettingsStructure({sections,host,read,write,request,save,reload,activityDraft,commitActivity,getProviders=()=>[],onActivityChange=()=>{},onIdle=()=>{},onEditorClosed=()=>{},onConnectionState=()=>{},doc=host.ownerDocument}) {
   let disposed=false;
   const editors=new Map(),refreshers=[],restorers=[],disposers=[];
   const visibility=createConditionalMotion(doc);disposers.push(visibility.dispose);
@@ -129,7 +129,9 @@ export function composeSettingsStructure({sections,host,read,write,request,save,
   const providerLayout=models.card.querySelector('#provider-manager-layout');
   const add=modal(providerLayout.querySelector('#provider-manager-actions'),'provider-add','添加渠道',[models.card.querySelector(':scope > .settings-editor')],{description:'填写渠道名称、Base URL 和 API Key，点击“添加渠道”。'});
   add.box.classList.add('provider-add-launcher');
-  const modelManager=modal(models.fields,'model-manager','渠道与模型库',[providerLayout],{});
+  const modelManager=modal(main,'model-manager','渠道与模型库',[providerLayout],{});
+  modelManager.box.classList.add('model-manager-entry');
+  modelManager.box.querySelector('[data-settings-open="model-manager"]').classList.add('primary');
   const fallbackSummary=node('small','muted');watch(['api.fallbackModels'],()=>{fallbackSummary.textContent=(read('api.fallbackModels')||[]).map(item=>item.model).join(' → ')||'未设置';});
   fold(models.fields,'fallback','故障时使用的备选模型',[fallbackSummary,take('管理备选模型')]);
   const modelParameters=fold(models.fields,'model-parameters','模型参数',[sampling,thinking]);disposers.push(mountSendSettings(modelParameters,{id:'model-setting-tooltip'}).dispose);
@@ -207,6 +209,7 @@ export function composeSettingsStructure({sections,host,read,write,request,save,
   let connectionRead=0;
   function showConnection(payload){
     if(disposed)return;
+    onConnectionState(payload);
     const state=payload?.onebot||{},connected=state.connected===true,ready=connected&&state.transportReady!==false;
     connectionName.textContent=ready?(state.selfNickname||'QQ')+(state.selfId?` · ${state.selfId}`:''):connected?'正在验证账号…':'QQ 未连接';
     connectionSummary.dataset.connected=String(ready);

@@ -1,5 +1,5 @@
 import {createLiveRefresh} from '../live-refresh.js';
-import {request,onShellEvent,onLeave,getViewState,onViewStateSnapshot,contentReady} from '/panels/panel-client.js';
+import {request,onShellEvent,onLeave,getViewState,onViewStateSnapshot,contentReady} from '../panel-client.js';
 import {installListLayout} from '../list-layout.js';
 import {createActiveTaskTicker} from '../active-task-ticker.js';
 import {collapsibleExpanded} from '../collapsible.js';

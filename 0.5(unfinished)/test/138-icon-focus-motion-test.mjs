@@ -84,6 +84,7 @@ try {
     assert.equal(await frame.evaluate(()=>window.iconEffects().length),0,'Unselected hover never starts a glyph');
   }
   await page.locator('#outside').focus();await page.keyboard.press('Tab');
+  for(let index=0;index<ICON_NAMES.indexOf('sessions');index++)await page.keyboard.press('Tab');
   await frame.waitForFunction(()=>document.activeElement?.id==='icon-sessions');
   assert.equal(await panel.locator('#icon-sessions').evaluate(button=>button.matches(':focus-visible')),true);
   await waitActive('icon-sessions');

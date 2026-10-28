@@ -6,6 +6,7 @@ import path from 'node:path';
 import {modelUiFixture} from './model-ui-fixture.mjs';
 import {settingsSection} from './settings-navigation.mjs';
 import {PERSONALIZATION_FIELDS as fields,PERSONALIZATION_GROUPS as groups,DEFAULT_THEME,resolveScheme} from '../ui/panels/theme.js';
+import {SHARED_APPEARANCE_KEYS} from '../ui/panels/appearance-sharing.js';
 
 const evidence=path.resolve('.qa-local/appearance-editor-20261023');fs.mkdirSync(evidence,{recursive:true});
 const checks=[];
@@ -138,9 +139,9 @@ try{
   const customMode=await until(()=>qa.disk().ui.uikit.mode,value=>value.startsWith('custom:'),'custom scheme was not created');
   await saved(edits);assert.deepEqual(Object.fromEntries(fields.map(field=>[field.key,resolveScheme(qa.disk().ui.uikit)[field.key]])),edits);
   await mode('light');await until(()=>qa.disk().ui.uikit.mode,value=>value==='light','light base did not save');
-  for(const spec of fields)assert.equal(current()[spec.key],DEFAULT_THEME[spec.key],spec.key+' does not leak from custom scheme into the light base');
+  for(const spec of fields)assert.equal(current()[spec.key],SHARED_APPEARANCE_KEYS.includes(spec.key)?edits[spec.key]:DEFAULT_THEME[spec.key],spec.key+' follows the shared-layout / private-paint boundary in the light base');
   await mode(customMode);await saved(edits);
-  record('named themes preserve the complete field set while light and dark factory schemes remain independent');
+  record('named themes retain private paint while shared fonts and controls remain consistent across light and dark palettes');
 
   await page.setViewportSize({width:560,height:920});
   for(const group of groups)await openGroup(group.id);await settle();

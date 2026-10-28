@@ -8,7 +8,7 @@ export function resolveAccountScope(locationLike=globalThis.location){
   else if(pathname==='/'||pathname==='/index.html'){
     const params=new URLSearchParams(search);if(params.has('account'))id=params.getAll('account').length===1?normalizeAccountId(params.get('account')):null;
   }
-  if(!id)throw Error('账号地址无效，请返回主账号。');
+  if(!id)throw Error('账号地址无效，请重新选择 QQ。');
   return Object.freeze({id,base:id==='primary'?'':'/accounts/'+id});
 }
 // A document never changes account in place. Requests, leases and asset URLs

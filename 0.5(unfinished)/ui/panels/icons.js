@@ -1,6 +1,7 @@
 // Project-owned round-stroke symbols, with motion room inside a 24-unit canvas.
 import { installIconMotion } from './icon-motion.js';
 import { LIFE_EMBLEM_FRAMES } from './life-emblem.js';
+import {normalizeIconOverrides} from './icon-customization.js';
 const NS = 'http://www.w3.org/2000/svg';
 const line = (role,d) => ({role,d});
 const solid = (role,d) => ({role,d,solid:true});
@@ -58,20 +59,46 @@ const GLYPHS = Object.freeze({
   'status-model-pending':[line('network','M5 6.5h9M5 12h9M5 17.5h7M7 6.5L12 12 7 17.5'),line('nodes','M6.5 6.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM6.5 17.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM17 6.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM16 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0z'),pending()],
 });
 const ALIASES = Object.freeze({extension:'plugins',plugin:'plugins',chat:'chats',session:'sessions',profile:'community',chart:'usage',gear:'settings'});
+const preferences = new WeakMap();
+function drawIcon(svg, key, overrides) {
+  const choice=overrides?.[key],glyph=Object.hasOwn(GLYPHS,choice?.glyph)?choice.glyph:key;
+  svg.dataset.iconMotion=choice?.image?'custom':glyph;
+  svg.setAttribute('viewBox',!choice?.image&&glyph==='emblem'?'0 0 68 68':'0 0 24 24');
+  svg.replaceChildren();
+  if(choice?.image){const img=svg.ownerDocument.createElementNS(NS,'image');img.setAttribute('href',choice.image);img.setAttribute('width','24');img.setAttribute('height','24');img.setAttribute('preserveAspectRatio','xMidYMid meet');svg.append(img);return;}
+  for(const [index,glyphPart] of GLYPHS[glyph].entries()){
+    const part=svg.ownerDocument.createElementNS(NS,'path');part.setAttribute('d',glyphPart.d);part.dataset.iconPart=String(index);part.dataset.iconRole=glyphPart.role;
+    if(glyphPart.solid){part.setAttribute('fill',glyph==='emblem'?'#3d9bff':'currentColor');part.setAttribute('stroke','none');}svg.append(part);
+  }
+}
+export function applyIconOverrides(doc,input){
+  const next=normalizeIconOverrides(input),previous=preferences.get(doc);if(previous&&JSON.stringify(previous)===JSON.stringify(next))return;
+  preferences.set(doc,next);
+  for(const svg of doc?.querySelectorAll?.('svg.qq-icon[data-icon-key]:not([data-icon-original])')||[])if(JSON.stringify(previous?.[svg.dataset.iconKey])!==JSON.stringify(next[svg.dataset.iconKey]))drawIcon(svg,svg.dataset.iconKey,next);
+  if(doc?.head&&['archive','chevron'].some(key=>JSON.stringify(previous?.[key])!==JSON.stringify(next[key]))){
+    let sheet=doc.querySelector('style[data-custom-empty-icon]');
+    if(!next.archive&&!next.chevron)sheet?.remove();
+    else{
+      if(!sheet){sheet=doc.createElement('style');sheet.dataset.customEmptyIcon='';doc.head.append(sheet);}
+      sheet.textContent=[['archive','.empty::before'],['chevron','.member-cards details > summary::after']].map(([key,selector])=>{
+        if(!next[key])return '';
+        if(next[key].image)return selector+'{mask:none!important;-webkit-mask:none!important;background:transparent url("'+next[key].image+'") center/contain no-repeat!important}';
+        const svg=doc.createElementNS(NS,'svg');drawIcon(svg,key,next);svg.setAttribute('xmlns',NS);svg.setAttribute('stroke','black');svg.setAttribute('color','black');svg.setAttribute('fill','none');svg.setAttribute('stroke-width','1.8');const uri='data:image/svg+xml,'+encodeURIComponent(svg.outerHTML);return selector+'{mask-image:url("'+uri+'")!important;-webkit-mask-image:url("'+uri+'")!important}';
+      }).join('\n');
+    }
+  }
+}
 /** Pure decoration: the surrounding control supplies its accessible name. */
-export function createIcon(name,{size=20}={}) {
+export function createIcon(name,{size=20,original=false}={}) {
   installIconMotion(document);
   const px=Number.isFinite(Number(size))?Math.min(96,Math.max(12,Number(size))):20;
   const key=Object.hasOwn(GLYPHS,name)?name:Object.hasOwn(ALIASES,name)?ALIASES[name]:'panel';
   const svg=document.createElementNS(NS,'svg');
-  svg.setAttribute('class','qq-icon icon-'+key);svg.dataset.iconMotion=key;
+  svg.setAttribute('class','qq-icon icon-'+key);svg.dataset.iconKey=key;
   svg.style.setProperty('--icon-size-ratio',String(px/20));
   for(const [name,value] of Object.entries({viewBox:key==='emblem'?'0 0 68 68':'0 0 24 24',width:String(px),height:String(px),'aria-hidden':'true',focusable:'false',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round'}))svg.setAttribute(name,value);
-  for(const [index,glyph] of GLYPHS[key].entries()) {
-    const part=document.createElementNS(NS,'path');part.setAttribute('d',glyph.d);part.dataset.iconPart=String(index);part.dataset.iconRole=glyph.role;
-    if(glyph.solid){part.setAttribute('fill',key==='emblem'?'#3d9bff':'currentColor');part.setAttribute('stroke','none');}
-    svg.append(part);
-  }
+  if(original)svg.dataset.iconOriginal='true';
+  drawIcon(svg,key,original?null:preferences.get(document));
   return svg;
 }
 export const ICON_NAMES=Object.freeze(Object.keys(GLYPHS));

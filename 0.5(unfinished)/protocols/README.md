@@ -7,6 +7,8 @@ QQ-Agent 只提供本地识别、启动与 OneBot 连接适配，不附带、下
 3. 打开 QQ-Agent「设置 → QQ 连接 → 添加 QQ」，选择「Snowluma」或「Napcat」。窗口会自动识别放入的发行包；出现包名后点击「继续连接」。ZIP 会在 QQ-Agent 数据目录中自动解压，原 ZIP 保留，无需手动刷新。
 4. 按窗口提示完成账号选择或扫码；协议端的首次协议确认、密码设置仍需你亲自完成。「启动时恢复连接」开启后，下次启动 QQ-Agent 会恢复已勾选的账号。
 
+SnowLuma 首次启动后，「连接 QQ」窗口会显示「复制初始密码」。点击即可复制本次启动输出中的随机密码，再打开 SnowLuma 完成首次确认和改密。修改密码后该按钮自动隐藏；后续连接使用你设置的管理密码。初始密码仅从 QQA 启动的当前进程读取，不会写入 QQA 配置；自行在其它位置启动的 SnowLuma 仍需手动输入。
+
 | 协议端 | 可直接托管的发行包 | 首次使用 |
 | --- | --- | --- |
 | [NapCat](https://github.com/NapNeko/NapCatQQ/releases) | Windows x64 的 `NapCat.Shell.Windows.Node.zip` | 在其登录页扫码。普通 Shell 包使用上游启动器，或换用完整 Node 包 |

@@ -1,4 +1,4 @@
-import {visibleValuePorts,valueEdges,valueInputPoint,valueOutputPoint,graphWouldCycle} from './management-values.js';
+import {VALUE_PORT_ROW_HEIGHT,visibleValuePorts,valueEdges,valueInputPoint,valueOutputPoint,graphWouldCycle} from './management-values.js';
 // Pure graph helpers: layout is independent of the live editor and never rewrites
 // execution order. Explicit edges preserve existing branches during insert/reorder.
 export function outgoing(rule,node,catalog){
@@ -30,11 +30,11 @@ export function removeNode(rule,catalog,id){
 }
 
 // Editable canvas: node coordinates are independent from execution order.
-export function canvasLayout(rule,catalog,{automatic=false}={}){
+export function canvasLayout(rule,catalog,{automatic=false,compactFields=false}={}){
   const base=graphLayout(rule,catalog),positions=new Map(),columns=new Map(),saved=automatic?{}:rule.layout?.positions??{};
   const data=valueEdges(rule,catalog),children=new Map(rule.nodes.map(n=>[n.id,new Set()])),parents=new Map(rule.nodes.map(n=>[n.id,new Set()])),ranks=new Map(rule.nodes.map(n=>[n.id,0]));for(const edge of [...base.edges.filter(e=>!e.end),...data]){children.get(edge.from)?.add(edge.to);parents.get(edge.to)?.add(edge.from);}const queue=rule.nodes.filter(n=>!parents.get(n.id).size).map(n=>n.id),degree=new Map([...parents].map(([id,p])=>[id,p.size]));while(queue.length){const id=queue.shift();for(const child of children.get(id)){ranks.set(child,Math.max(ranks.get(child),ranks.get(id)+1));degree.set(child,degree.get(child)-1);if(!degree.get(child))queue.push(child);}}for(const node of rule.nodes)base.positions.get(node.id).rank=ranks.get(node.id);
   for(const node of rule.nodes){const item=base.positions.get(node.id);const column=columns.get(item.rank)??[];column.push(item);columns.set(item.rank,column);}
-  const enrich=item=>{const inputs=visibleValuePorts(rule,item.node,catalog,'inputs'),outputs=visibleValuePorts(rule,item.node,catalog,'outputs'),flowCount=outgoing(rule,item.node,catalog).length,start=catalog.find(s=>s.type===item.node.type)?.pure?104:104+flowCount*26+24;return {inputs,outputs,start,height:Math.max(112,start+Math.max(inputs.length,outputs.length)*26+18)};};
+  const enrich=item=>{const node=item.node,inputs=visibleValuePorts(rule,node,catalog,'inputs').filter(p=>!compactFields||node.bindings?.[p.key]),outputs=visibleValuePorts(rule,node,catalog,'outputs').filter(p=>!compactFields||data.some(e=>e.from===node.id&&e.output===p.key)),flowCount=outgoing(rule,node,catalog).length,start=catalog.find(s=>s.type===node.type)?.pure?104:104+flowCount*26+24;return {inputs,outputs,start,height:Math.max(112,start+Math.max(inputs.length,outputs.length)*VALUE_PORT_ROW_HEIGHT+18)};};
   const nodeHeight=item=>enrich(item).height;
   const pure=item=>!!catalog.find(s=>s.type===item.node.type)?.pure,sum=items=>items.reduce((total,item)=>total+nodeHeight(item)+42,0)-42;
   const maxHeight=Math.max(180,...[...columns.values()].map(column=>sum(column.filter(item=>!pure(item)))));

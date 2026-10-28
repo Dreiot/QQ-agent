@@ -70,7 +70,7 @@ console.log('=== C. 技能页与插件页接上共享模块 ===');
   for (const id of ['skills', 'plugins']) {
     const src = fs.readFileSync(path.join(uiRoot, 'panels', id, 'panel.js'), 'utf8');
     assert.ok(src.includes("from'../extension-manager.js'"), `${id} 面板 import 共享模块`);
-    assert.ok(src.includes("from'/panels/panel-client.js'"), `${id} 面板走面板 RPC`);
+    assert.ok(src.includes("from'../panel-client.js'"), `${id} 面板沿同一账号路径加载面板 RPC，避免重复模块`);
   }
   console.log('✓ 两页共用渲染且都走面板 RPC');
 }

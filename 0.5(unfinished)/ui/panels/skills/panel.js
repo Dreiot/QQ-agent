@@ -1,6 +1,6 @@
 import {createLiveRefresh} from '../live-refresh.js';
 import {readExtensionUpdates,bindExtensionUpdateCheck} from '../extension-updates.js';
-import{request,onShellEvent,onLeave,contentReady}from'/panels/panel-client.js';import{$,clear,text,error}from'../ui.js';
+import{request,onShellEvent,onLeave,contentReady}from'../panel-client.js';import{$,clear,text,error}from'../ui.js';
 import{renderExtensions,bindZipInstaller,renderCleanup,renderCapabilityProviders,summarizeExtensions}from'../extension-manager.js';
 import{bindMarketBrowser}from'../market-browser.js';
 import{bindAuthoringGuide}from'../extension-authoring.js';

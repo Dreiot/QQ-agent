@@ -340,7 +340,7 @@ test('injected disconnected processes refresh their pipe instead of loading a se
 test('connection reuse performs no write and rejects insecure or ambiguous named listeners',async()=>{
   const {mergeProtocolConnection}=await import('../src/protocols/adapters.js');
   const config=mergeProtocolConnection({},{provider:'snowluma',httpPort:19201,wsPort:19202,token:credential});
-  const stub=scripted([{path:'/api/config/12345678',value:{config}}]);
+  const stub=scripted([{path:'/api/config/12345678',value:{config}},{path:'/api/config/12345678',value:{config}}]);
   const result=await prepareSnowConnection({request:stub.request,credential,accountId:'12345678',httpPort:19301,wsPort:19302,token:'replacement',reuseExisting:true,verifySaved:true});
   assert.deepEqual(result,{httpPort:19201,wsPort:19202,token:credential});stub.done();
   for(const edit of [c=>c.networks.httpServers.push(c.networks.httpServers[0]),c=>c.networks.wsServers[0].accessToken='different',c=>c.networks.httpServers[0].host='0.0.0.0',c=>c.networks.wsServers[0].enabled=false]){const c=structuredClone(config);edit(c);assert.equal(snowConnection(c),null);}
@@ -372,6 +372,14 @@ test('SnowLuma 2.2 canonical defaults support reuse, readback and lossless rollb
   const changed=await prepareSnowConnection({request,credential,accountId:'12345678',httpPort:19301,wsPort:19302,token:credential,verifySaved:true});assert.equal(snowConnection(config).httpPort,19301);await changed.rollback();assert.equal(snowConnection(config).httpPort,19201);assert.equal(posts,2);
 });
 
+test('online native bridges can be refreshed explicitly without injecting another DLL',async()=>{
+  const stub=scripted([{path:'/api/processes',value:{list:[{pid:123,account:{uin:'12345678'},uin:'12345678',loggedIn:true,injected:true,connected:true,status:'online'}]}},{path:'/api/processes/123/refresh',value:{success:true}}]);
+  await injectNativeProcess({request:stub.request,credential,pid:123,expectedAccountId:'12345678',refreshConnected:true});stub.done();
+});
+test('reused endpoints must remain stable across readback and concurrent edits are never overwritten',async()=>{
+  const {mergeProtocolConnection}=await import('../src/protocols/adapters.js'),config=mergeProtocolConnection({},{provider:'snowluma',httpPort:19201,wsPort:19202,token:credential}),changed=structuredClone(config);changed.networks.wsServers[0].port=19402;
+  const stub=scripted([{path:'/api/config/12345678',value:{config}},{path:'/api/config/12345678',value:{config:changed}}]);await assert.rejects(prepareSnowConnection({request:stub.request,credential,accountId:'12345678',httpPort:19301,wsPort:19302,token:'unused',reuseExisting:true,verifySaved:true}),/正在变化/);stub.done();
+});
 for (const { name, run } of cases) {
   try { await run(); passed++; console.log(`PASS ${name}`); }
   catch (error) { console.error(`FAIL ${name}`); throw error; }

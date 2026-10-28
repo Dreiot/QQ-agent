@@ -342,6 +342,64 @@ await test('WebUI logs remain private while public state and watch events contai
   });
 });
 
+await test('SnowLuma control URL comes from runtime settings and cannot be replaced by message logs', async () => {
+  await scoped('snow-control-origin', async f => {
+    await writeFiles(f.root, {...filesFor('snowluma','release/'),'release/config/runtime.json':JSON.stringify({webuiPort:5199,webuiHost:'127.0.0.1'})});
+    await f.manager.start();await f.manager.launch(items(f.manager.snapshot())[0].id,undefined,{deferConnection:true});
+    assert.equal(f.manager.snapshot().running.webUiUrl,'http://127.0.0.1:5199/');
+    const child=f.children[0];
+    for(const line of ['[QQ message] WebUI http://127.0.0.1:6099/webui这个地址\n','WebUI http://127.0.0.1:5099/\n','WebUI http://127.0.0.1:5999/?token=private\n','WebUI https://outside.example/\n']){
+      child.stdout.write(line);assert.equal(f.manager.snapshot().running.webUiUrl,'http://127.0.0.1:5199/');assert.equal(f.manager.loginContext().webUiUrl,'http://127.0.0.1:5199/');
+    }
+    assert.equal(f.manager.snapshot().running.status,'running');assert.equal(f.manager.snapshot().running.account,'');
+  });
+});
+
+await test('SnowLuma bootstrap copy survives chunked/color output but never survives password rotation, stop or another instance', async () => {
+  await scoped('snow-initial-password', async f => {
+    const initial='a1b2c3d4e5f60718',next='b1c2d3e4f5061728',auth={mustChangePassword:true,passwordHash:'fixture-hash',passwordSalt:'fixture-salt',generatedAt:'fixture-first-boot'};
+    await writeFiles(f.root,{...filesFor('snowluma','release/'),'release/config/webui.json':JSON.stringify(auth)});
+    await f.manager.start();const item=items(f.manager.snapshot())[0];await f.manager.launch(item.id,undefined,{deferConnection:true});
+    const context=f.manager.loginContext(),child=f.children[0];
+    assert.deepEqual(f.manager.initialPassword(context.instanceId,{reveal:true}),{available:false});
+    child.stdout.write('12:00 INFO [WebUI] initial credentials: user=admin password=too-short\n');
+    child.stdout.write('12:00 INFO [Other] initial credentials: user=admin password='+initial+'\n');
+    assert.deepEqual(f.manager.initialPassword(context.instanceId,{reveal:true}),{available:false});
+    child.stdout.write('12:00 INFO \x1b[35m[WebUI]\x1b[0m initial credentials: user=admin pass');
+    child.stderr.write('unrelated diagnostic on another stream\n');
+    child.stdout.write('word='+initial.slice(0,8));assert.deepEqual(f.manager.initialPassword(context.instanceId),{available:false});
+    child.stdout.write(initial.slice(8)+'\r\n');
+    assert.deepEqual(f.manager.initialPassword(context.instanceId),{available:true});
+    assert.deepEqual(f.manager.initialPassword('wrong-instance',{reveal:true}),{available:false});
+    assert.deepEqual(f.manager.initialPassword(context.instanceId,{reveal:true}),{available:true,password:initial});
+    child.stdout.write('x'.repeat(70000)+'\n');assert.equal(f.manager.output().text.includes(initial),false);
+    assert.equal(f.manager.initialPassword(context.instanceId,{reveal:true}).password,initial,'copy does not depend on the output ring buffer');
+    assert.equal(JSON.stringify([f.manager.snapshot(),f.events,f.updates,f.logs]).includes(initial),false,'no password in general state, SSE, settings or host logs');
+    await writeFiles(f.root,{'release/config/webui.json':JSON.stringify({...auth,mustChangePassword:false})});
+    assert.deepEqual(f.manager.initialPassword(context.instanceId,{reveal:true}),{available:false});
+    await writeFiles(f.root,{'release/config/webui.json':JSON.stringify(auth)});
+    assert.deepEqual(f.manager.initialPassword(context.instanceId,{reveal:true}),{available:false},'restoring an old config never restores a discarded password');
+    child.stdout.write('12:00 INFO [WebUI] initial credentials: user=admin password='+initial+'\n');
+    await writeFiles(f.root,{'release/config/webui.json':JSON.stringify({...auth,passwordHash:'new-fixture-hash'})});
+    assert.deepEqual(f.manager.initialPassword(context.instanceId,{reveal:true}),{available:false},'hash changes invalidate even when the bootstrap flag stays true');
+    await f.manager.stop();await f.manager.launch(item.id,undefined,{deferConnection:true});const fresh=f.manager.loginContext();
+    child.stdout.write('12:00 INFO [WebUI] initial credentials: user=admin password='+initial+'\n');
+    assert.deepEqual(f.manager.initialPassword(fresh.instanceId),{available:false},'late output from a stopped instance is ignored');
+    f.children[1].stdout.write('12:00 INFO [WebUI] initial credentials: user=admin password='+next+'\n'+'y'.repeat(10000)+'\n');
+    assert.equal(f.manager.initialPassword(fresh.instanceId,{reveal:true}).password,next,'the first line in a large output chunk is preserved');
+    assert.deepEqual(f.manager.initialPassword(context.instanceId,{reveal:true}),{available:false});
+    await f.manager.stop();assert.deepEqual(f.manager.initialPassword(fresh.instanceId,{reveal:true}),{available:false});
+  });
+});
+await test('a known NapCat control URL is not redirected by later log messages', async () => {
+  await scoped('nap-control-pinned', async f => {
+    await writeFiles(f.root,filesFor('napcat','release/'));await f.manager.start();await f.manager.launch(items(f.manager.snapshot())[0].id);
+    const child=f.children[0];child.stdout.write('WebUI http://127.0.0.1:6099/webui消息正文\n');assert.equal(f.manager.snapshot().running.webUiUrl,null);
+    child.stdout.write('WebUI http://[::1]:6099/webui/?token=private\n');assert.equal(f.manager.snapshot().running.webUiUrl,'http://[::1]:6099/webui/');
+    child.stdout.write('WebUI http://127.0.0.1:5099/\n');assert.equal(f.manager.snapshot().running.webUiUrl,'http://[::1]:6099/webui/');
+  });
+});
+
 await test('startup stays manual by default and explicit auto-start applies on the next application start', async () => {
   await scoped('explicit-autostart', async f => {
     await writeFiles(f.root, filesFor('napcat', 'release/'));

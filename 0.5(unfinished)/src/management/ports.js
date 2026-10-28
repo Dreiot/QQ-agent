@@ -1,4 +1,5 @@
 import {isSequence} from './sequences.js';
+import {portInfo} from './port-info.js';
 // Typed value contracts. This module has no transport or editor dependencies.
 const p=(key,label,type,extra={})=>({key,label,type,...extra});
 const uid=p('user_id','QQ 号','user_id',{inherit:'user',optional:true});
@@ -9,7 +10,7 @@ const fieldKey=(spec,f)=>spec.type==='mute'&&f.key==='seconds'?'duration':spec.t
 const userNodes=new Set(['sender_is','role_is','joined_recently','card_matches','nickname_matches','has_card','target_sender','target_except_sender','switch_user','switch_role','member_info']);
 const targeted=new Set(['mute','unmute','kick','rename_card','grant_admin','revoke_admin','special_title','send_at']);
 const messageNodes=new Set(['found','not_found','text_match','text_length','contains_any','contains_all','has_link','switch_text']);
-export function describeNodePorts(spec){
+function nodePorts(spec){
   if(spec.valuePorts)return {inputs:spec.valuePorts.inputs.map(port=>{const f=spec.fields.find(f=>f.key===port.configKey);return {...(f?{default:f.default,min:f.min,max:f.max,maxLength:f.maxLength,options:f.options,required:!!f.required}:{}),...port};}),outputs:spec.valuePorts.outputs};
   if(spec.trigger){let outputs=eventOutputs.map(x=>({...x}));if(spec.type!=='message'){outputs=outputs.filter(x=>!['message','message_id','sender.sex','sender.age','sender.area','sender.level','sender.title'].includes(x.key));outputs=outputs.map(x=>x.key==='user_id'?{...x,label:'触发用户 QQ'}:x);}
     if(['member_leave','member_muted','member_unmuted','admin_changed'].includes(spec.type))outputs.push(p('operator_id','操作者 QQ','user_id',{optional:true}));
@@ -32,6 +33,7 @@ export function describeNodePorts(spec){
   if(spec.type==='member_info')outputs.unshift(p('member','成员信息','object'),p('nickname','昵称','text'),p('card','群名片','text'),p('role','群身份','text'),p('join_time','入群时间','timestamp',{optional:true}),p('last_sent_time','最后发言时间','timestamp',{optional:true}));
   return {inputs,outputs};
 }
+export function describeNodePorts(spec){const ports=nodePorts(spec);return Object.fromEntries(['inputs','outputs'].map(direction=>[direction,ports[direction].map(port=>portInfo(spec,port,direction))]));}
 export function canBindType(output,input){return output===input||input==='sequence'&&['stream','list','user_ids','group_ids','message'].includes(output)||output==='any'||input==='any'||input==='list'&&['user_ids','group_ids','message'].includes(output);}
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)&&[Object.prototype,null].includes(Object.getPrototypeOf(value));
 export function validateLiteralValue(value){let count=0,bytes=0;const seen=new Set();function visit(item,depth){if(++count>12000||depth>16)throw Error('参数值层级或数量过多');if(item===null)return;if(typeof item==='string'){bytes+=item.length;if(bytes>100000||item.includes('\0'))throw Error('参数内容过长或含无效字符');return;}if(typeof item==='number'){if(!Number.isFinite(item))throw Error('参数数值无效');return;}if(typeof item==='boolean')return;if(typeof item!=='object'||!Array.isArray(item)&&!plain(item)||seen.has(item))throw Error('参数需要有效的 JSON 值');seen.add(item);for(const [key,child]of Object.entries(item)){if(['__proto__','constructor','prototype'].includes(key))throw Error('参数字段无效');bytes+=key.length;visit(child,depth+1);}seen.delete(item);}visit(value,0);return value;}

@@ -1,0 +1,17 @@
+.management-simulation-fields{align-items:start}
+.management-simulation-advanced>div{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+.management-sample-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px;border:0;border-top:1px solid var(--line);padding:12px 0 0;margin:0;min-width:0}
+.management-sample-group>legend{padding:0 8px 0 0;font-size:12px;color:var(--text)}
+.management-sample-group .management-field{min-width:0;margin:0}
+.management-sample-group .management-field:has(textarea){grid-column:1/-1}
+.management-sample-group[hidden],.management-simulator .management-field[hidden]{display:none!important}
+.management-simulation-safety{margin:0 0 14px;font-size:12px;color:var(--muted);line-height:1.65}
+.management-result-heading{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.management-result-summary{font-size:12px;line-height:1.65;color:var(--good);margin:12px 0}
+.management-action-list{display:grid;gap:8px;max-height:360px;overflow:auto;scrollbar-width:thin}
+.management-action-list .management-action-preview{margin:0;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2)}
+.management-action-preview p{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+.management-execution-trace{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}
+.management-execution-trace>summary{cursor:pointer;font-size:12px;color:var(--muted)}
+.management-execution-trace .management-trace{padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+@media(max-width:560px){.management-sample-group{grid-template-columns:minmax(0,1fr)}}

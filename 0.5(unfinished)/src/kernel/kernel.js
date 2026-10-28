@@ -13,6 +13,7 @@ const VERSION = '0.5.0';
 const APP_ID = 'cn.kondius.qq-agent'; // 沿用（覆盖安装检测/备份还原/更新提示依赖，DSH §0）
 
 export function createKernel({
+  syncAppearance = null,
   env = process.env,
   appRoot = APP_ROOT,
   fetchImpl = null,
@@ -430,7 +431,7 @@ export function createKernel({
   // removed rather than left behind as unreachable first-match shadows: maintaining both
   // tables lets registration order silently change public DTOs and bypass new side effects.
   const consoleRouteContext = {
-    config, sessions, store, memory, loader, orchestrator, log, bus, capability, registry, permissions, priceUpdates,
+    config, sessions, store, memory, loader, orchestrator, log, bus, capability, registry, permissions, priceUpdates,syncAppearance,
     serviceLeaseOf, globalBlocklistOf,
     settingsSaveIdentity: () => {
       const settings = panelAdapters.listPanels().find(panel => panel.id === 'settings');

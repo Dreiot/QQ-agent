@@ -27,10 +27,10 @@ export function registerLocalProtocolRoutes(http,{localProtocols,protocolLogin,o
     if(res?.destroyed&&!res.writableEnded)service.closeView({sessionId:result.sessionId});
     return result;
   });
-  for(const action of ['connect','refresh','inject','close','visibility']){
+  for(const action of ['connect','refresh','inject','initial-password','close','visibility']){
     http.route('POST','/api/local-protocols/login/'+action,({body})=>{
       if(!body||typeof body!=='object'||Array.isArray(body)||typeof body.sessionId!=='string'||!body.sessionId||body.sessionId.length>64)throw Object.assign(new Error('账号接入窗口参数无效'),{status:400,expose:true});
-      return login()[action==='close'?'closeView':action](body);
+      return login()[action==='close'?'closeView':action==='initial-password'?'initialPassword':action](body);
     });
   }
 }

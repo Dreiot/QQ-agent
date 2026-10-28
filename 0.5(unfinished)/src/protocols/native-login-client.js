@@ -178,7 +178,7 @@ export async function refreshNativeQr({ request, credential }) {
 }
 
 /** Re-read processes immediately before loading; a stale or already attached PID is rejected. */
-export async function injectNativeProcess({ request, credential, pid, expectedAccountId }) {
+export async function injectNativeProcess({ request, credential, pid, expectedAccountId,refreshConnected=false }) {
   if (!validPid(pid)) throw new NativeLoginError('请选择有效的 QQ 进程。');
   if (expectedAccountId !== undefined && (typeof expectedAccountId !== 'string' || !/^[0-9]{5,10}$/.test(expectedAccountId))) {
     throw new NativeLoginError('所选 QQ 账号无效，请刷新列表后重新选择。');
@@ -186,12 +186,12 @@ export async function injectNativeProcess({ request, credential, pid, expectedAc
   const current = await snowCall(request, '/api/processes', credential);
   if (!Array.isArray(current?.list)) throw new NativeLoginError('SnowLuma 返回的 QQ 进程列表暂不可用。');
   const process = normalizeSnowProcesses(current.list).find(item => item.pid === pid);
-  if (!process?.selectable) throw new NativeLoginError('此 QQ 进程已变化，请刷新列表后重新选择。');
+  if (!process||!process.selectable&&!(refreshConnected&&process.status==='online')) throw new NativeLoginError('此 QQ 进程已变化，请刷新列表后重新选择。');
   if (expectedAccountId !== undefined && process.accountId !== expectedAccountId) {
     throw new NativeLoginError('此 QQ 进程的登录账号已变化，请刷新列表后重新选择。');
   }
   // An injected DLL survives a console restart. Reconcile its pipe instead of injecting twice.
-  const result = await snowCall(request, `/api/processes/${pid}/${process.injected ? 'refresh' : 'load'}`, credential, { method: 'POST', timeoutMs: 30000 });
+  const result = await snowCall(request, `/api/processes/${pid}/${process.injected||process.status==='online' ? 'refresh' : 'load'}`, credential, { method: 'POST', timeoutMs: 30000 });
   if (result?.success !== true) throw new NativeLoginError('未能接入所选 QQ 进程，请检查桌面 QQ 状态及运行权限。');
 }
 
@@ -218,7 +218,7 @@ export async function prepareSnowConnection({ request, credential, accountId: se
     throw new NativeLoginError('暂时无法读取此 QQ 账号的连接配置，未修改配置。');
   }
   const existing = reuseExisting && snowConnection(snapshot.config);
-  if (existing) return existing;
+  if (existing){if(verifySaved){const confirmed=await snowCall(request,path,credential);if(!isDeepStrictEqual(snowConnection(confirmed?.config),existing))throw new NativeLoginError('此 QQ 的连接配置正在变化，请刷新后重试；未覆盖新配置。');}return existing;}
   let config;
   try {
     config = mergeProtocolConnection(snapshot.config, { provider: 'snowluma', httpPort, wsPort, token });

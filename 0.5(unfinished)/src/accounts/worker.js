@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createApplication } from '../kernel/composition.js';
+import {createWorkerAppearanceSync} from './appearance.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QQ = /^[0-9]{5,10}$/;
@@ -14,7 +15,7 @@ const inertProtocols = ({ appRoot }) => {
     launch: rejected, stop: rejected, saveSettings: rejected, output: () => ({ text: '' }), loginContext: () => null, commitLoginConnection: rejected };
 };
 const inertLogin = () => ({ get: async () => ({ provider: null, source: 'worker', stage: 'unavailable', processes: [], qrImage: '', account: null }),
-  connect: rejected, refresh: rejected, inject: rejected, closeView: () => ({ ok: true }), visibility: () => ({ ok: true }), close() {} });
+    connect: rejected, refresh: rejected, inject: rejected, initialPassword: rejected, closeView: () => ({ ok: true }), visibility: () => ({ ok: true }), close() {} });
 
 async function plainDirectory(target) {
   const absolute = path.resolve(target), parsed = path.parse(absolute); let current = parsed.root;
@@ -23,21 +24,22 @@ async function plainDirectory(target) {
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('账号工作区路径不可用。');
   }
 }
-function safeConnection(onebot) {
+function safeConnection(onebot,expectedAccount) {
   try {
     const http = new URL(onebot.httpUrl), ws = new URL(onebot.wsUrl);
     if (http.protocol !== 'http:' || ws.protocol !== 'ws:' || http.hostname !== '127.0.0.1' || ws.hostname !== '127.0.0.1'
       || http.username || http.password || ws.username || ws.password || http.search || ws.search || http.hash || ws.hash
       || http.pathname !== '/' || ws.pathname !== '/' || !http.port || !ws.port || http.port === ws.port
       || !tokenValid(onebot.accessToken) || onebot.httpAccessToken !== onebot.accessToken) throw Error();
-    return { httpUrl: http.origin, wsUrl: ws.origin, accessToken: onebot.accessToken, httpAccessToken: onebot.httpAccessToken };
+    return { httpUrl: http.origin, wsUrl: ws.origin, accessToken: onebot.accessToken, httpAccessToken: onebot.httpAccessToken,expectedSelfId:expectedAccount };
   } catch { throw new Error('账号连接参数无效。'); }
 }
 
 /** Dedicated Node child entry. It never creates an Electron app, window, tray or protocol process. */
 export function startAccountWorker({ runtimeProcess = process, createApplicationImpl = createApplication, exit = code => process.exit(code) } = {}) {
-  let kernel = null, generation = '', expectedAccount = '', initialized = false, stopping = false, stopPromise = null, statusTimer = null;
+  let kernel = null, generation = '', expectedAccount = '', connectionRevision='', initialized = false, stopping = false, stopPromise = null, statusTimer = null;
   const disposers = [];
+  let appearanceSync=null;
   const send = value => {
     if (!runtimeProcess.connected || typeof runtimeProcess.send !== 'function') return;
     try { runtimeProcess.send({ ...value, generation }, () => {}); } catch { /* Parent shutdown owns this child. */ }
@@ -56,7 +58,7 @@ export function startAccountWorker({ runtimeProcess = process, createApplication
       statusTimer = null; if (!kernel || stopping) return;
       const { status, accountId } = currentIdentity();
       if (status.connected === true && accountId !== expectedAccount) kernel.orchestrator?.pause?.();
-      send({ type: 'account.status', connected: status.connected === true, accountId,
+      send({ type: 'account.status', connected: status.connected === true&&status.transportReady!==false,transportReady:status.transportReady,connectionRevision, accountId,
         nickname: String(status.selfNickname ?? status.nickname ?? kernel.transport?.selfNickname ?? '').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 80),
         paused: kernel.orchestrator?.status?.()?.paused !== false });
     }, 40); statusTimer.unref?.();
@@ -64,7 +66,7 @@ export function startAccountWorker({ runtimeProcess = process, createApplication
   async function stop(code = 0) {
     if (stopPromise) return stopPromise; stopping = true; clearTimeout(statusTimer);
     return stopPromise = (async () => {
-      for (const dispose of disposers.splice(0)) try { dispose(); } catch {}
+      appearanceSync?.close();for (const dispose of disposers.splice(0)) try { dispose(); } catch {}
       try { await kernel?.stop?.(); } catch { code = 1; }
       send({ type: 'account.stopped' }); exit(code);
     })();
@@ -74,7 +76,7 @@ export function startAccountWorker({ runtimeProcess = process, createApplication
     if (!UUID.test(message.generation || '') || !UUID.test(message.workspaceId || '') || !QQ.test(message.accountId || '')
       || !tokenValid(message.serverToken) || runtimeProcess.env.QQ_AGENT_ACCOUNTS_CHILD !== '1'
       || runtimeProcess.env.QQ_AGENT_ACCOUNT_ID !== message.accountId) throw Error('账号启动身份无效。');
-    generation = message.generation; expectedAccount = message.accountId;
+    generation = message.generation; expectedAccount = message.accountId;connectionRevision=message.connectionRevision??message.generation;
     for (const [field, variable] of [['dataDir', 'QQ_AGENT_DATA_DIR'], ['extensionRoot', 'QQ_AGENT_EXTENSION_ROOT'], ['cacheRoot', 'QQ_AGENT_RUNTIME_CACHE_ROOT']]) {
       if (typeof message[field] !== 'string' || path.resolve(message[field]) !== path.resolve(runtimeProcess.env[variable] || '')) throw Error('账号工作区身份无效。');
       await plainDirectory(message[field]);
@@ -83,11 +85,12 @@ export function startAccountWorker({ runtimeProcess = process, createApplication
     const dataParent = path.dirname(path.resolve(message.dataDir));
     if (path.basename(dataParent) !== message.workspaceId || path.dirname(path.resolve(message.extensionRoot)) !== dataParent
       || path.dirname(path.resolve(message.cacheRoot)) !== dataParent) throw Error('账号工作区边界无效。');
-    kernel = await createApplicationImpl({ appRoot: path.resolve(message.appRoot), env: runtimeProcess.env, headless: false,
+    kernel = await createApplicationImpl({ appRoot: path.resolve(message.appRoot), env: runtimeProcess.env, headless: false,syncAppearance:()=>appearanceSync?.flush(),
       components: { 'runtime.migration.detect': () => ({ eligible: false, reason: '账号工作区不自动迁移其他账号数据' }),
         'runtime.localProtocols': inertProtocols, 'runtime.protocolLogin': inertLogin } });
     if (stopping) { await kernel.stop(); return; }
-    kernel.config.update({ server: { token: message.serverToken, port: 0, autoStart: false }, localProtocols: { autoStart: false } });
+    if(message.sharedAppearance)appearanceSync=createWorkerAppearanceSync({config:kernel.config,initial:message.sharedAppearance,send,onChange:()=>kernel.bus.emit?.('status',{configUpdated:true})});
+    kernel.config.update({ server: { token: message.serverToken, port: 0, autoStart: false }, localProtocols: { autoStart: false },onebot:{expectedSelfId:expectedAccount} });
     kernel.orchestrator.pause();
     let lastToken = message.serverToken;
     disposers.push(kernel.config.onChange(() => {
@@ -107,15 +110,28 @@ export function startAccountWorker({ runtimeProcess = process, createApplication
     if (message.type === 'account.initialize') { void initialize(message).catch(async () => { send({ type: 'account.error' }); await stop(1); }); return; }
     if (message.type === 'account.generation' && UUID.test(message.generation || '')) { generation = message.generation; return; }
     if (message.generation !== generation) return;
+    if(message.type==='account.appearance'){appearanceSync?.receive(message);return;}
     if (message.type === 'account.stop') { void stop(); return; }
     if (message.type === 'account.configure' && kernel && !stopping && UUID.test(message.requestId || '')) {
-      try { kernel.config.update({ onebot: safeConnection(message.onebot) }); send({ type: 'account.response', requestId: message.requestId, ok: true }); }
+      try {
+        const onebot = safeConnection(message.onebot, expectedAccount);
+        const previous = kernel.config.get().onebot || {};
+        const retryNow = Object.entries(onebot).every(([key, value]) => previous[key] === value)
+          && kernel.transport?.status?.()?.transportReady === false;
+        connectionRevision = message.connectionRevision ?? connectionRevision;
+        kernel.config.update({ onebot });
+        // A newly injected QQ may reuse its ports and token. An explicit reconnect
+        // must not wait for the old unavailable-process retry backoff to expire.
+        if (retryNow) kernel.transport.reconnect?.();
+        reportStatus();
+        send({ type: 'account.response', requestId: message.requestId, ok: true });
+      }
       catch { send({ type: 'account.response', requestId: message.requestId, ok: false }); }
     }
     if (message.type === 'account.pause' && kernel && !stopping && UUID.test(message.requestId || '') && typeof message.paused === 'boolean') {
       try {
         const identity = currentIdentity();
-        if (!message.paused && (identity.status.connected !== true || identity.accountId !== expectedAccount)) throw new Error('账号身份尚未就绪或已变化。');
+        if (!message.paused && (identity.status.connected !== true || identity.status.transportReady===false || identity.accountId !== expectedAccount)) throw new Error('账号身份尚未就绪或已变化。');
         message.paused ? kernel.orchestrator.pause() : kernel.orchestrator.resume(); reportStatus();
         send({ type: 'account.response', requestId: message.requestId, ok: true });
       } catch { send({ type: 'account.response', requestId: message.requestId, ok: false }); }

@@ -1,4 +1,4 @@
-import {request,onShellEvent,onLeave,getViewState,onViewStateSnapshot,contentReady} from '/panels/panel-client.js';
+import {request,onShellEvent,onLeave,getViewState,onViewStateSnapshot,contentReady} from '../panel-client.js';
 import {createSelectionState} from '../selection-state.js';
 import {installListLayout} from '../list-layout.js';
 import {createMessageSweep} from './message-sweep.js';

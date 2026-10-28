@@ -15,6 +15,8 @@ body[data-panel=rules] .head{margin:0}
 #rules-editor .switch-card{position:relative;display:inline-flex;align-items:center;justify-content:space-between;gap:24px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2);cursor:pointer}
 #rules-editor .switch-card input{position:absolute;inset:0;opacity:0;width:100%;height:100%;min-height:0;margin:0;cursor:inherit}
 #rules-editor .switch-card:after{content:'';width:20px;height:20px;border:1px solid var(--muted);border-radius:50%;display:grid;place-items:center;flex:none;font-size:13px}
+#rules-editor .switch-card:has(input:not(:checked)){border-color:var(--bad)}
+#rules-editor .switch-card:has(input:not(:checked)):after{border-color:var(--bad)}
 #rules-editor .switch-card:has(input:checked){border-color:var(--good);background:color-mix(in srgb,var(--good) 14%,var(--surface-2))}
 #rules-editor .switch-card:has(input:checked):after{content:'✓';color:var(--good);border-color:var(--good)}
 #rules-editor .switch-card:has(input:focus-visible){outline:1px solid var(--accent);outline-offset:1px}

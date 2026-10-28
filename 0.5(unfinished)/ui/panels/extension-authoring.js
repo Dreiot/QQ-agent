@@ -1,4 +1,4 @@
-import {request,onLeave} from '/panels/panel-client.js';
+import {request,onLeave} from './panel-client.js';
 import {button,text} from './ui.js';
 import {installDisposableDialog} from './dialog-lifecycle.js';
 import {buildAuthoringPrompt} from './extension-authoring-prompt.js';

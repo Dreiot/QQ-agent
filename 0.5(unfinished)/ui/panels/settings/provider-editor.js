@@ -1,7 +1,7 @@
 import {button, destructiveButton, text} from '../ui.js';
 import {installDisposableDialog} from '../dialog-lifecycle.js';
 import {modelId, providerEndpointIdentity} from './model-catalog-data.js';
-import {onLeave} from '/panels/panel-client.js';
+import {onLeave} from '../panel-client.js';
 
 // This default editor is an independent ui.assets target. It has no token,
 // storage or configuration-array access; the host handles field conflict rules.

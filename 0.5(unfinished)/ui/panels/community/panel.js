@@ -1,7 +1,7 @@
 // 社区面板：发布账号、扩展发布与意见收集。
 // 全部动作走面板 RPC（后端按 manifest 白名单放行），UI 只负责收集参数与呈现结果。
 import {createLiveRefresh} from '../live-refresh.js';
-import { onShellEvent, request, openCommunityPage, publishMarket, cancelMarketPublish, authenticateMarket, cancelMarketAuthentication, openCaptchaDiagnostics, onLeave, contentReady } from '/panels/panel-client.js';
+import { onShellEvent, request, openCommunityPage, publishMarket, cancelMarketPublish, authenticateMarket, cancelMarketAuthentication, openCaptchaDiagnostics, onLeave, contentReady } from '../panel-client.js';
 import { $, clear, text, error, capability, confirmAction, button, bindDestructiveAction } from '../ui.js';
 import { createFeedbackForm } from './feedback-form.js';
 import {bindAuthoringGuide} from '../extension-authoring.js';

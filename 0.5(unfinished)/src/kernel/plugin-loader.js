@@ -627,6 +627,7 @@ export function createPluginLoader({
       || (watchToken !== null && (!watchStarted || watchEpoch !== watchToken));
     const entry = {
       manifest, dir, rootKind, status: 'loading', loadError: null,
+      compatibility: { mode: manifest.legacy ? '04' : 'native', automatic: false, features: [] },
       fingerprint: diskFingerprint ?? null,
       resources: new Set(), ownerEpoch, scanFingerprint: diskFingerprint, enabledAtScan: isEnabledFor(manifest),
       instance: null, ctx: null, tools: [], hooks: {}, promptSections: [],
@@ -725,6 +726,23 @@ export function createPluginLoader({
       if (cancelled()) throw new Error('装载期间插件已停止或禁用');
       const ctx = makeCtx(entry, bundled);
       entry.ctx = ctx;
+      let setupCtx = ctx;
+      // Both generations used apiVersion:1. The compatibility provider offers
+      // a dual SDK for unmarked user packages and detects actual legacy calls;
+      // explicit legacy packages retain their full existing lifecycle adapter.
+      if (!bundled && !manifest.legacy && capabilityRegistry.has('compat-04.createAutomaticApi')) {
+        setupCtx = await capabilityRegistry.consume('compat-04.createAutomaticApi', {
+          targetCtx: ctx, manifest,
+          onLegacyUse(feature) {
+            const first = entry.compatibility.mode !== '04';
+            entry.compatibility.mode = '04'; entry.compatibility.automatic = true;
+            entry.compatibility.features.push(feature);
+            if (first) log.info(`[loader] ${manifest.id} 自动启用 0.4 接口兼容（${feature}）`);
+          },
+        });
+        entry.ctx = setupCtx;
+        if (cancelled()) throw new Error('兼容识别期间插件已停止或禁用');
+      }
       // compat-04 必须在 setup 阶段即可被 legacy Skill 消费；先登记为 loading-active，失败仍走统一回滚。
       if (manifest.id === 'compat-04') { entry.status = 'active'; entries.set(manifest.id, entry); }
       // 0.4 legacy 入口统一交给 compat-04，避免旧 API 直接接触内核。
@@ -739,14 +757,14 @@ export function createPluginLoader({
           entry.legacyLifecycle = true;
           await adapted.setup();
         }
-      } else if (typeof impl?.setup === 'function') await impl.setup(ctx);
-      else if (typeof impl?.register === 'function') await impl.register(ctx); // 旧式兼容
+      } else if (typeof impl?.setup === 'function') await impl.setup(setupCtx);
+      else if (typeof impl?.register === 'function') await impl.register(setupCtx); // 旧式兼容
       else if (impl && (impl.hooks || impl.providers || typeof impl.activate === 'function')) {
         Object.assign(entry.hooks, impl.hooks ?? {});
         for (const [name, provider] of Object.entries(impl.providers ?? {})) {
           ctx.registerCapability(name, provider);
         }
-        if (typeof impl.activate === 'function') await impl.activate(ctx);
+        if (typeof impl.activate === 'function') await impl.activate(setupCtx);
       } else {
         throw new Error('入口未导出 setup/register/hooks/providers/activate 之一');
       }
@@ -896,6 +914,7 @@ export function createPluginLoader({
       lastError: e.lastError ?? null, lastErrorAt: e.lastErrorAt ?? null,
       enabled: isEnabled(e.manifest.id),
       fingerprint: e.fingerprint ?? null, generation: e.generation ?? null,
+      compatibility: e.compatibility ? structuredClone(e.compatibility) : null,
       panels: structuredClone(e.manifest.panels ?? []),
       permissions: [...(e.manifest.permissions ?? [])],
       // 只读 DTO 暴露清单声明，控制台据此渲染和校验设置；值在 HTTP 边界由 serializeSkill 脱敏。

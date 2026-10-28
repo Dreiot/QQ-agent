@@ -195,6 +195,10 @@ export function register(http,context){
   assert.equal((await request(wa.workspaceId, '/api/config')).data.api.model, 'model-account-A');
   assert.equal((await request(wb.workspaceId, '/api/config')).data.api.model, 'model-account-B');
   assert.equal(kernel.config.get().api.model, 'initial-model');
+  const visual=(await import('../ui/panels/theme.js')).resolveScheme;
+  assert.equal((await request(wa.workspaceId,'/api/config','POST',{ui:{uikit:{dark:{fontSize:18,accent:'#bb2299',brandIconSize:52,icons:{sessions:{glyph:'chats'},emblem:{glyph:'moon'}}}}}})).status,200);
+  const appearanceB=await until(async()=>{const config=(await request(wb.workspaceId,'/api/config')).data;return visual(config.ui.uikit).fontSize===18?config:null;},'shared appearance reaches real second worker');
+  assert.equal(visual(appearanceB.ui.uikit).icons.sessions.glyph,'chats');assert.notEqual(visual(appearanceB.ui.uikit).accent,'#bb2299');assert.notEqual(visual(appearanceB.ui.uikit).brandIconSize,52);assert.equal(visual(appearanceB.ui.uikit).icons.emblem,undefined);assert.equal(appearanceB.api.model,'model-account-B');
   assert.equal((await fetch(base + '/accounts/' + wa.workspaceId + '/api/config')).status, 401);
   await kernel.accounts.stop(wb.workspaceId);
   await until(() => sb.ended, 'stopped worker SSE closes');

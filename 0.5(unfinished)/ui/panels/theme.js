@@ -18,6 +18,8 @@
 import {accountStorageKey,accountResourceUrl} from './account-scope.js';
 import {isVideoBackground,syncBackgroundVideo} from './background-media.js';
 import {normalizeVisual,applyVisualStyles} from './visual-style.js';
+import {applyIconOverrides} from './icons.js';
+import {normalizeIconOverrides} from './icon-customization.js';
 const KEY = accountStorageKey('qq-agent.theme.v1');
 
 const colorTransitionGates = new WeakMap();
@@ -309,7 +311,7 @@ export const DEFAULT_THEME = {
 /** 参与方案的配色/背景键。 */
 const SCHEMA_KEYS = ['bg', 'surface', 'surface2', 'surface3', 'text', 'muted', 'faint', 'accent', 'accent2', 'good', 'warn', 'bad', 'line', 'lineSoft', 'accentInk', 'bgImage', 'bgOpacity', 'bgBlur', 'bgFit', 'bgRotate', 'bgZoom', 'bgOffsetX', 'bgOffsetY'];
 /** 形状/布局键（也属于一套完整方案）。 */
-const LAYOUT_KEYS = ['radius', 'density', 'sidebar', 'btnAlign', 'styleMode', 'visual', ...PERSONALIZATION_FIELDS.map(field => field.key)];
+const LAYOUT_KEYS = ['radius', 'density', 'sidebar', 'btnAlign', 'styleMode', 'visual', 'icons', ...PERSONALIZATION_FIELDS.map(field => field.key)];
 
 /** bgZoom is a normalized selection in the current viewport's media plane. */
 export function normalizeBackgroundCrop(input = {}) {
@@ -333,6 +335,7 @@ export function normalizeTheme(input) {
   const t = { ...DEFAULT_THEME, ...(input ?? {}) };
   Object.assign(t, normalizePersonalization(t));
   t.visual = normalizeVisual(t.visual);
+  t.icons = normalizeIconOverrides(t.icons);
   if (t.gradient === undefined || t.gradient === null) t.gradient = false;
   return t;
 }
@@ -347,6 +350,7 @@ export function normalizeScheme(input, base = DEFAULT_THEME) {
   if (typeof input?.gradient === 'boolean') out.gradient = input.gradient;
   Object.assign(out, normalizePersonalization(out));
   out.visual = normalizeVisual(out.visual);
+  out.icons = normalizeIconOverrides(out.icons);
   return out;
 }
 
@@ -515,6 +519,7 @@ export function publicPanelTheme(input) {
   out.preset = Object.hasOwn(PRESETS, theme.preset) ? theme.preset : DEFAULT_THEME.preset;
   Object.assign(out, normalizePersonalization(theme));
   out.visual = normalizeVisual(theme.visual);
+  out.icons = normalizeIconOverrides(theme.icons);
   return out;
 }
 
@@ -528,6 +533,7 @@ export function applyTheme(t) {
   const s = typeof document !== 'undefined' ? document.documentElement?.style : null;
   if (!s) return theme;
   applyVisualStyles(document,theme.visual);
+  applyIconOverrides(document,theme.icons);
   holdThemeColorTransitions(document);
 
   const light = theme.preset === 'light' || (() => {

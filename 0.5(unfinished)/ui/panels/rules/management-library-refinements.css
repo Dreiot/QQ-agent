@@ -1,0 +1,101 @@
+#management-node-library .management-library-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+}
+#management-node-library .management-library-detail > * { flex-shrink: 0; }
+#management-node-library .management-library-kind { margin: 0; }
+#management-node-library .management-library-detail h4 { margin: -5px 0 0; }
+#management-node-library .management-library-description {
+  margin: 0;
+  line-height: 1.65;
+}
+#management-node-library .management-library-ports {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 11px;
+}
+#management-node-library .management-library-ports > span {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+#management-node-library .management-library-example {
+  margin: 2px 0;
+  padding: 10px 12px;
+}
+#management-node-library .management-library-example p { line-height: 1.6; }
+#management-node-library .management-library-fields {
+  padding: 0;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  overflow: hidden;
+}
+#management-node-library .management-library-fields > summary {
+  padding: 11px 12px;
+  color: var(--text);
+  line-height: 1.4;
+}
+#management-node-library .management-library-fields[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+#management-node-library .management-library-fields > .management-library-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 12px;
+  border: 0;
+}
+#management-node-library .management-library-field + .management-library-field {
+  border-top: 1px solid var(--line);
+}
+#management-node-library .management-library-field-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+#management-node-library .management-library-field-head > strong { flex: 1; }
+#management-node-library .management-library-field-type {
+  color: var(--muted);
+  white-space: nowrap;
+}
+#management-node-library .management-library-default {
+  margin: 0;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+#management-node-library .management-library-field .management-value-description,
+#management-node-library .management-library-field .management-value-example {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+#management-node-library .management-library-fields small { align-self: auto; }
+#management-node-library .management-library-field-key {
+  opacity: .7;
+  line-height: 1.4;
+}
+#management-node-library .management-library-fields > .management-library-params {
+  display: grid;
+  padding: 10px 12px;
+  border: 0;
+}
+#management-node-library .management-library-footer { justify-content: flex-end; }
+@media (max-width: 560px) {
+  #management-node-library .management-library-layout {
+    grid-template-rows: auto minmax(105px, .6fr) minmax(210px, 1.2fr);
+    gap: 10px;
+  }
+  #management-node-library .management-library-detail { padding: 12px; }
+  #management-node-library .management-library-fields > summary { padding: 10px; }
+  #management-node-library .management-library-fields > .management-library-field { padding: 10px; }
+}

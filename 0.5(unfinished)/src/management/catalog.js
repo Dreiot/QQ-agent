@@ -131,7 +131,7 @@ export function validateManagement(input={},catalog=NODE_CATALOG){
       const ports=spec.ports??describeNodePorts(spec),bindings={},values={};
       if(node.bindings!=null){if(typeof node.bindings!=='object'||Array.isArray(node.bindings)||Object.keys(node.bindings).length>50)throw Error('数据连线格式无效');for(const [key,value]of Object.entries(node.bindings)){if(!ports.inputs.some(p=>p.key===key)||!value||typeof value!=='object'||!/^[\w-]{1,80}$/.test(value.nodeId)||typeof value.port!=='string'||value.port.length>100)throw Error('数据输入或来源无效');bindings[key]={nodeId:value.nodeId,port:value.port};}}
       if(node.values!=null){if(typeof node.values!=='object'||Array.isArray(node.values)||Object.keys(node.values).length>50)throw Error('输入值格式无效');for(const [key,value]of Object.entries(node.values)){const port=ports.inputs.find(p=>p.key===key);if(!port||port.configKey)throw Error('数据输入值无效');values[key]=validatePortValue({...port,required:true},validateLiteralValue(value));}}
-      if((bindings.user_id||Object.hasOwn(values,'user_id'))&&(bindings.targets||Object.hasOwn(values,'targets')))throw Error('操作用户 QQ 与目标用户列表请只指定一项');
+      if((bindings.user_id||Object.hasOwn(values,'user_id'))&&(bindings.targets||Object.hasOwn(values,'targets')))throw Error('单个 QQ 与待处理成员名单请只指定一项');
       const bound=new Set(ports.inputs.filter(p=>bindings[p.key]&&p.configKey).map(p=>p.configKey)),config=validateNodeConfig(spec,node.config,rule.enabled,bound);
       let routes;if(spec.routeKind){
         if(!Array.isArray(node.routes)||!node.routes.length||node.routes.length>12)throw Error('多路分流需要 1–12 条分支');const routeIds=new Set();

@@ -71,6 +71,26 @@ try {
   await registry.replace([{...dotted,id:'bad id'},dotted]);assert.equal(registry.list().length,1);assert.equal(registry.list()[0].id,'weather_panel');
   registry.dispose();
 
+  // Frames never download directly. Only the built-in rules editor may ask
+  // the host to export a bounded JSON document, never a URL or arbitrary file.
+  for(const definition of [
+    {id:'rules',kind:'bundled',title:'Rules',permissions:[],api:[]},
+    {id:'logs',kind:'bundled',title:'Logs',permissions:[],api:[]},
+    {...manifest,id:'rules',title:'Plugin Rules'},
+  ]){
+    const host=new PanelRegistry({frameHost:{replaceChildren(){}},api:{}});host.register(definition);
+    try{const downloadFrame=await host.mount(definition.id),tokens=downloadFrame.sandbox.split(' ');assert.equal(tokens.includes('allow-downloads'),false);assert.equal(tokens.includes('allow-same-origin'),false);}finally{host.dispose();}
+    const fixture=frameFixture(),exported=[],exportBridge=new RpcBridge({frame:fixture.frame,api:{},manifest:{...definition,api:[{method:'GET',path:'/api/management'}]},exportRule:rule=>exported.push(rule)});
+    const sendExport=(params,nonce=exportBridge.nonce)=>exportBridge.handle({source:fixture.frame.contentWindow,origin:'null',data:{jsonrpc:'2.0',id:'export',method:'rules.export',params,meta:{panel:definition.id,nonce}}});
+    try{
+      const rule={name:'Export',nodes:[]};await sendExport({rule},'wrong');assert.equal(exported.length,0);
+      await sendExport({rule});assert.equal(exported.length,definition.kind==='bundled'&&definition.id==='rules'?1:0);
+      const count=exported.length;
+      for(const params of [{rule,url:'https://invalid.example/'},{rule:{name:'x'.repeat(1024*1024),nodes:[]}},null,{rule:[]}])await sendExport(params);
+      assert.equal(exported.length,count);exportBridge.leaving=true;await sendExport({rule});assert.equal(exported.length,count);
+    }finally{exportBridge.close();}
+  }
+
   // Exercise the host shortcut through both the initial ready handshake and
   // reuse of an already mounted editor. Plugins never receive this intent.
   const navigationMessages=new WeakMap();globalThis.document.createElement=()=>{const fixture=frameFixture();navigationMessages.set(fixture.frame,fixture.sent);return fixture.frame;};
