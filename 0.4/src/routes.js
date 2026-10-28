@@ -11,6 +11,9 @@
 // 路由 handler 通过闭包取用，避免在 app.js 里反复传参。
 
 import fs from 'node:fs';
+import {kernelRoutes} from './kernel-routes.js';
+import {desktopWechatRoutes} from './desktop-wechat-routes.js';
+import {isDesktopWechatKey} from './desktop-wechat-key.js';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR } from './config.js';
@@ -48,7 +51,7 @@ export function createRoutes(deps) {
     readBody, authorize,
     visionScan,
     buildUsageStats, buildUsageBreakdown,
-    reloadSkills
+    reloadSkills,kernelControl,desktopWechat,sender
   } = deps;
 
   // 小工具：读请求体（容错：没 body 当空对象）。
@@ -81,6 +84,8 @@ export function createRoutes(deps) {
   };
 
   return [
+    ...kernelRoutes({kernelControl,readBody}),
+    ...desktopWechatRoutes({channel:desktopWechat,readBody}),
     // ── 状态 / 数据目录 / 重置 ─────────────────────────────────────────
     {
       method: 'GET', pattern: '/api/status',
@@ -95,6 +100,7 @@ export function createRoutes(deps) {
             : onebot.lastConnectError ? `连接失败：${String(onebot.lastConnectError).slice(0, 120)}`
               : '未连接：请自行启动协议端并核对 OneBot 地址与令牌';
         return json(res, 200, {
+          desktopWechat: desktopWechat.status(),
           onebot: {
             connected: onebot.connected,
             everConnected: onebot.everConnected,
@@ -1100,6 +1106,7 @@ export function createRoutes(deps) {
         const chats = store.listChats().map((key) => ({ key, ...store.getChatMeta(key) }))
           .sort((a, b) => b.lastTs - a.lastTs);
         await Promise.allSettled(chats.map(async (c) => {
+          const wx=desktopWechat.describeChat(c.key);if(wx){Object.assign(c,wx);return;}
           const m = /^group:(\d+)$/.exec(String(c.key || ''));
           if (!m) { c.chatName = ''; return; }
           try {
@@ -1141,14 +1148,14 @@ export function createRoutes(deps) {
       }
     },
     {
-      method: 'GET', pattern: /^\/api\/memory-files\/(group|private)_(\d+)$/,
+      method: 'GET', pattern: /^\/api\/memory-files\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         return json(res, 200, { ...memory.query(chatKey), members: memory.members(chatKey) });
       }
     },
     {
-      method: 'PUT', pattern: /^\/api\/memory-files\/(group|private)_(\d+)\/members\/(\d+)$/,
+      method: 'PUT', pattern: /^\/api\/memory-files\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\/members\/(\d+|wxdesktop_[a-f0-9]{32})$/,
       handler: async ({ req, res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const body = await bodyOf(req);
@@ -1167,7 +1174,7 @@ export function createRoutes(deps) {
       }
     },
     {
-      method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+)\/members\/(\d+)$/,
+      method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\/members\/(\d+|wxdesktop_[a-f0-9]{32})$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         memory.removeMember(chatKey, match[3]);
@@ -1177,7 +1184,7 @@ export function createRoutes(deps) {
     },
     {
       // 删除整个会话的记忆（记忆页「删除本会话记忆」按钮）
-      method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+)$/,
+      method: 'DELETE', pattern: /^\/api\/memory-files\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         memory.removeChat(chatKey);
@@ -1191,7 +1198,7 @@ export function createRoutes(deps) {
         try {
           const body = await bodyOf(req);
           const chatKey = String(body.chatKey || '');
-          if (!/^(group|private):\d+$/.test(chatKey)) return json(res, 400, { ok: false, error: 'chatKey 格式错误' });
+          if (!/^(group|private):(?:\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})$/.test(chatKey)) return json(res, 400, { ok: false, error: 'chatKey 格式错误' });
           let userIds = null;
           if (body.userIds != null) {
             const arr = Array.isArray(body.userIds) ? body.userIds : [body.userIds];
@@ -1215,7 +1222,7 @@ export function createRoutes(deps) {
 
     // ── 存档消息 ─────────────────────────────────────────────────────
     {
-      method: 'GET', pattern: /^\/api\/chats\/(group|private)_(\d+)\/messages$/,
+      method: 'GET', pattern: /^\/api\/chats\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\/messages$/,
       handler: async ({ res, json, url, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const limit = Math.min(1048576, Math.max(1, Number(url.searchParams.get('limit')) || 1048576));
@@ -1283,11 +1290,11 @@ export function createRoutes(deps) {
       }
     },
     {
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/wake$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\/wake$/,
       handler: async ({ res, json }) => json(res, 410, { error: '已移除：不触发的消息现在会立即标为已读，无需手动唤醒' })
     },
     {
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/test-send$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\/test-send$/,
       handler: async ({ req, res, json, match }) => {
         const body = await readBody(req);
         const text = String(body.text ?? '').trim();
@@ -1299,6 +1306,12 @@ export function createRoutes(deps) {
         //   全空时必须显式开 allowAllWhenEmpty。
         const kind = match[1];
         const id = match[2];
+        const wxKey=`${kind}:${id}`;
+        if(isDesktopWechatKey(wxKey)){
+          if(!desktopWechat.isAllowed(wxKey))return json(res,403,{error:'微信会话未授权或尚未就绪'});
+          try{const result=await sender.sendTextBatch(wxKey,[text]);return json(res,200,{ok:true,...result});}
+          catch(error){return json(res,502,{error:error.message,sendUncertain:error.sendUncertain===true});}
+        }
         const cfgNow = getConfig();
         const denyList = cfgNow.deny?.[kind] ?? cfgNow.deny?.[`${kind}s`] ?? [];
         if (denyList.map(String).includes(String(id))) {
@@ -1323,12 +1336,12 @@ export function createRoutes(deps) {
       }
     },
     {
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/mark-read$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\/mark-read$/,
       handler: async ({ res, json, match }) => json(res, 200, { ok: true, marked: store.drainUnread(`${match[1]}:${match[2]}`).length })
     },
     {
       // 清空某会话的全部消息（整体清除存档）
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/clear$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\/clear$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const removed = store.clearChat(chatKey);
@@ -1338,7 +1351,7 @@ export function createRoutes(deps) {
     },
     {
       // 仅屏蔽（不删除）：把某会话全部未读标记为已读，不再触发回复
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/mute$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\/mute$/,
       handler: async ({ res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const marked = store.muteUnread(chatKey);
@@ -1348,7 +1361,7 @@ export function createRoutes(deps) {
     },
     {
       // 部分清除：删除指定本地 id 的消息
-      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+)\/delete-messages$/,
+      method: 'POST', pattern: /^\/api\/chats\/(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\/delete-messages$/,
       handler: async ({ req, res, json, match }) => {
         const chatKey = `${match[1]}:${match[2]}`;
         const body = await bodyOf(req);

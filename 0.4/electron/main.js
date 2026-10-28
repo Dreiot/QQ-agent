@@ -1,6 +1,7 @@
 // Electron 桌面壳：启动核心服务器（同一进程），打开会话式控制台窗口。
 // 傻瓜式：托盘常驻、关窗不退出、可选开机自启。
-import { app, BrowserWindow, Tray, Menu, nativeImage, session, shell, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, session, shell, dialog, ipcMain,utilityProcess } from 'electron';
+import {KernelSupervisor} from './kernel-supervisor.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -152,10 +153,15 @@ ipcMain.on('app-refocus', () => {
 let core = null;
 let tray = null;
 let quitting = false;
+function trustedKernelFrame(event){return !!mainWindow&&event.sender===mainWindow.webContents&&event.senderFrame===mainWindow.webContents.mainFrame&&isKernelConsole(event.senderFrame.url);}
+function isKernelConsole(value){try{const u=new URL(value);return u.protocol==='http:'&&u.hostname==='127.0.0.1'&&Number(u.port)===core?.lastPort;}catch{return false;}}
+ipcMain.handle('qqa-kernel-status',event=>{if(!trustedKernelFrame(event))throw Error('仅本机QQ Agent主界面可管理内核');return core?.status();});
+ipcMain.handle('qqa-kernel-restart',async event=>{if(!trustedKernelFrame(event))throw Error('仅本机QQ Agent主界面可重启内核');if(quitting)throw Error('软件正在退出');const port=await core.restart();setTimeout(()=>mainWindow?.loadURL(`http://127.0.0.1:${port}/`),250);return{ok:true,...core.status()};});
+
 
 function applyAutoStart() {
   if (!core) return;
-  const cfg = core.getConfig();
+  const cfg = core.preferences;
   app.setLoginItemSettings({ openAtLogin: !!cfg.server?.autoStart });
 }
 
@@ -174,15 +180,15 @@ function createTray() {
   tray.setToolTip(describeInstance());
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '显示主界面', click: () => showWindow() },
-    { label: '暂停 / 恢复', click: () => core?.orchestrator.setPaused(!core.orchestrator.paused) },
+    { label: '暂停 / 恢复', click: () => core?.command('toggle-pause').catch(error=>dialog.showErrorBox('操作未完成',error.message)) },
+    { label: '重启内核（保留窗口与登录）',click:async()=>{try{const port=await core.restart();mainWindow?.loadURL(`http://127.0.0.1:${port}/`);}catch(error){dialog.showErrorBox('内核重启未完成',error.message);}} },
     { type: 'separator' },
     {
       label: '开机自启',
       type: 'checkbox',
-      checked: !!core.getConfig().server?.autoStart,
+      checked: !!core.preferences.server?.autoStart,
       click: (item) => {
-        core.updateConfig({ server: { autoStart: item.checked } });
-        applyAutoStart();
+        core.command('set-autostart',{enabled:item.checked}).then(applyAutoStart).catch(error=>dialog.showErrorBox('设置未完成',error.message));
       }
     },
     { type: 'separator' },
@@ -261,7 +267,7 @@ function createWindow(port) {
   mainWindow.webContents.on('will-redirect', guardNavigation);
   // 关窗默认缩到托盘（真正退出走托盘菜单），符合"常驻机器人"的使用习惯
   mainWindow.on('close', (event) => {
-    if (!quitting && core?.getConfig().server?.closeToTray !== false) {
+    if (!quitting && core?.preferences.server?.closeToTray !== false) {
       event.preventDefault();
       mainWindow.hide();
     }
@@ -296,9 +302,7 @@ app.whenReady().then(async () => {
     });
     bootDiag('setProxy 完成');
     console.log('[window] 代理模式：direct（绕过系统代理）');
-    const { createApp } = await import('../src/app.js');
-    bootDiag('src/app.js 已导入');
-    core = createApp({ log: (...args) => console.log(...args) });
+    core = new KernelSupervisor({launch:runtime=>utilityProcess.fork(path.join(__dirname,'kernel-worker.mjs'),[],{cwd:path.resolve(__dirname,'..'),env:{...process.env,QQ_AGENT_KERNEL_STATE:JSON.stringify(runtime)},stdio:'inherit',serviceName:'QQ Agent Core'}),onChange:value=>bootDiag('内核 '+value.phase+' pid='+(value.pid||'无')),onRestartRequested:()=>{if(!quitting)core.restart().then(port=>mainWindow?.loadURL(`http://127.0.0.1:${port}/`)).catch(error=>dialog.showErrorBox('内核重启未完成',error.message));}});
     // 先启动服务拿到真实端口，再开窗口。
     // 原先是 createWindow(core.lastPort ?? 3210) 在前、core.start() 在后 ——
     // 此时 lastPort 尚未赋值，窗口恒按 3210 加载；若端口被占用顺延到 3211+，

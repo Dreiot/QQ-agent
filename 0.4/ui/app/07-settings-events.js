@@ -31,6 +31,12 @@ function flushSettingsSaves() {
 }
 
 function bindSettingsEvents(c) {
+  if(state.settingsSection==='desktop-wechat'){
+    // This section saves through its channel endpoint, not the generic form snapshot.
+    const form=$('#settings-form');
+    if(form?.__settingsBound)form.__settingsBound={markDirty(){},flushSave(){}};
+    bindDesktopWechatSettings();return;
+  }
   /* ── 即时保存：任何设置项变动 → 防抖 600ms 自动保存 ──
      变动的设置块背景变成流动的浅黄色渐变（.dirty-glow）。
      黄条的消退时机：**切换设置区块或主页签时**（renderSettings 重渲染会重建
@@ -867,7 +873,7 @@ function bindSettingsEvents(c) {
       $('#persona-pick-hint').textContent = `删除失败：${e.message}`;
     }
   });
-  
+
   syncPersonaButtons(false);   // 初始装填不播动画（重渲染后是全新节点）
 
   // ── 白名单区块事件 ──
@@ -916,6 +922,19 @@ function bindSettingsEvents(c) {
   }).catch(() => {});
 
   // ── 检查更新（桌面端区块） ──
+  const restartKernelBtn=$('#restart-kernel-btn');
+  if(restartKernelBtn){const hint=$('#restart-kernel-hint');
+    restartKernelBtn.addEventListener('click',async()=>{restartKernelBtn.disabled=true;if(hint)hint.textContent='正在保存设置和任务并重启内核…';
+      try{await saveConfig({quiet:true});
+        if(window.qqAgentShell?.restartKernel)await window.qqAgentShell.restartKernel();
+        else{const before=await api('/api/kernel/status');if(!before.restartAvailable)throw Error(before.reason||'首次启用需要完整退出并重开QQ Agent');
+          await api('/api/kernel/restart',{method:'POST',body:'{}'});const deadline=Date.now()+90000;let ready=false;
+          while(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,1000));try{const after=await api('/api/kernel/status');if(after.ready===true&&after.pid&&after.pid!==before.pid){ready=true;break;}}catch{}}
+          if(!ready)throw Error('新内核尚未确认就绪，请查看托盘或启动日志；不会自动再次重启');location.reload();
+        }if(hint)hint.textContent='新内核已就绪，正在刷新界面…';}
+      catch(error){if(hint)hint.textContent='未完成：'+error.message+'；没有自动重试。';restartKernelBtn.disabled=false;}
+    });
+  }
   const curVerEl = $('#update-current');
   if (curVerEl) {
     api('/api/version').then((d) => { curVerEl.textContent = `v${d.version || '?'}`; })

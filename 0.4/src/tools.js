@@ -6,6 +6,7 @@
 //
 // 重构说明：所有工具通过 registerTool() 注册到 tool-registry.js，
 // 支持在设置页按卡片勾选启用/禁用。
+import {wechatToolAllowed} from './wechat-tool-policy.js';
 import { getConfig } from './config.js';
 import { normalizeMessageList, unquoteJsonString } from './util.js';
 import { formatStickerList } from './stickers.js';
@@ -1225,6 +1226,7 @@ export async function executeTool(defs, ctx, name, argsJson) {
   // 兼容：name 可能是 id（英文）或 name（中文显示名）
   const def = defs.find((d) => d.id === name || d.name === name);
   if (!def) return { content: `错误：未知工具 ${name}`, isError: true };
+  if(ctx.platform==='wechat-desktop'&&!wechatToolAllowed(def))return {content:'错误：此工具未接入微信',isError:true};
   let args = {};
   const raw = argsJson ?? '{}';
   try {

@@ -19,6 +19,8 @@ import { currentProviders } from './providers.js';
 import { skillManager } from './skills/manager.js';
 import { getToolAvailability } from './tool-registry.js';
 import { rescueUnsentReply } from './reply-rescue.js';
+import {isDesktopWechatKey,isDesktopWechatId} from './desktop-wechat-key.js';
+import {guardWechatContext} from './wechat-tool-policy.js';
 
 export class Orchestrator {
   constructor({ store, memory, stickers, sender, sessions, onebot, emit = null, reminders = null, videoReader = null }) {
@@ -123,6 +125,7 @@ export class Orchestrator {
     // 每次手动重试都会报"会话不存在"（2026-09-19 修）。
     const s = this.sessions.current.get(id) || this.sessions.get(id);
     if (!s) return { ok: false, reason: '会话不存在' };
+    if(s.deliveryUncertain)return {ok:false,reason:'该会话已有未知发送，先在微信设置核对原提交；不会重放整轮'};
     if (s.status !== 'error') return { ok: false, reason: '只有失败的会话才能重试' };
     if (Array.isArray(s.sent) && s.sent.length > 0) return { ok: false, reason: '该会话已发出过消息，重试会导致重复发言' };
     if (this.runningChats.has(s.chatKey)) return { ok: false, reason: '该会话正在运行中' };
@@ -165,6 +168,7 @@ export class Orchestrator {
    */
   onIncoming(chatKey, entry = null) {
     if (this.paused || this.aborted) return;
+    if(isDesktopWechatKey(chatKey)&&!this.sender.desktopWechat?.isAllowed(chatKey))return;
     // 运行中 / 倒计时中：消息保持未读（不判定、不重置），由会话结束的
     // drain 路径补判定（见 wake 末尾的 drain 注释）。
     if (this.runningChats.has(chatKey)) return;
@@ -596,6 +600,7 @@ export class Orchestrator {
           const canRetry = attempt < MAX_SESSION_ATTEMPTS
             && isRetryableError(error)
             && sentCount === 0
+            && !session.noAutoRetry
             && !this.aborted;
           if (!canRetry) break;
 
@@ -719,6 +724,7 @@ export class Orchestrator {
    * @returns {Promise<Array>} 合成的 tool_call 数组；[] = 什么都别发
    */
   async #rescueUnsentReply({ rawContent, triggerEntries, session, skillContext }) {
+    if(session.deliveryUncertain)return [];
     return rescueUnsentReply({
       text: rawContent,
       trigger: this.#triggerText(triggerEntries),
@@ -741,7 +747,8 @@ export class Orchestrator {
     const abortController = new AbortController();
     this.sessionAbortControllers.set(session.id, abortController);
     const abortSignal = abortController.signal;
-    const chatName = kind === 'group' ? await this.#chatName(chatId) : '';
+    const platform=isDesktopWechatKey(chatKey)?'wechat-desktop':'qq';
+    const chatName = platform==='wechat-desktop'?this.sender.desktopWechat?.describeChat(chatKey)?.chatName||'微信':kind==='group'?await this.#chatName(chatId):'';
     const selfNickname = kind === 'group' ? (cfg.persona.selfNickname || this.onebot.selfNickname || cfg.persona.botName) : cfg.persona.botName;
 
     // （原"上下文统计"三件套 —— 最近消息密度/上次发言时间/最后消息时间 ——
@@ -749,7 +756,7 @@ export class Orchestrator {
 
     // 表情库快照（提示词用）
     let stickerEntries = [];
-    if (cfg.sticker?.enabled !== false) {
+    if (platform!=='wechat-desktop' && cfg.sticker?.enabled !== false) {
       try { stickerEntries = (await this.stickers.sync(false)).entries ?? []; } catch { stickerEntries = []; }
     }
 
@@ -760,7 +767,7 @@ export class Orchestrator {
     const searchEnabled = cfg.webSearch?.enabled !== false;
     const toolsCfg = cfg.tools || {};
     const skillContext = {
-      chatKey, kind, chatId, chatName,
+      platform, chatKey, kind, chatId, chatName,
       model: cfg.api.model,
       provider: cfg.api.provider,
       visionEnabled,
@@ -790,7 +797,7 @@ export class Orchestrator {
     let ownerPersona = null;
     let ownerRules = '';
     try {
-      for (const p of skillManager.getCapabilityProviders('message.owner-check', skillContext)) {
+      for (const p of (platform==='wechat-desktop'?[]:skillManager.getCapabilityProviders('message.owner-check', skillContext))) {
         const r = p.fn({
           triggerEntries,
           kind,
@@ -813,13 +820,14 @@ export class Orchestrator {
     //   3. 全局人设（cfg.persona）
     // 名字（botName/selfNickname）在任何层都保持全局值 —— 那是账号身份，
     // 换了会和 @ 判定对不上（personaForChat 在结构上就不允许覆盖这两个字段）。
-    const systemPrompt = buildSystemPrompt({
+    let systemPrompt = buildSystemPrompt({
       skillContext,
       persona: ownerPersona || personaForChat(chatKey),
       extraSections: ownerRules
         ? [{ id: 'owner-rules-run', title: '', priority: 72, content: ownerRules }]
         : []
     });
+    if(platform==='wechat-desktop')systemPrompt+='\n【微信通道】当前是微信会话，群聊/私聊类型以当前上下文为准。媒体可用 read_wechat_image 读取当前会话图片；原生艾特使用当前群已核验的成员ID。引用、QQ表情库及未接入的QQ操作不可用；称谓不构成主人身份认证。';
     const userPrompt = buildUserPrompt({
       chatKey, kind, chatId, chatName,
       triggerEntries,
@@ -905,7 +913,7 @@ export class Orchestrator {
     const openAiTools = toOpenAiTools(toolDefs);
 
     const ctx = {
-      chatKey, kind, chatId,
+      platform, chatKey, kind, chatId,
       selfId: this.onebot.selfId,
       selfNickname,
       botName: cfg.persona.botName,
@@ -920,6 +928,7 @@ export class Orchestrator {
       emit: (type, payload) => this.emit(type, payload)
     };
 
+    if(platform==='wechat-desktop')guardWechatContext(ctx);
     const maxRounds = Math.max(1, Number(cfg.api.maxRounds) || 12);
     let finish = false;
     let webSearchCount = 0;
@@ -1282,6 +1291,7 @@ export class Orchestrator {
   }
 
   async #chatName(groupId) {
+    if(isDesktopWechatId(groupId))return this.sender.desktopWechat?.describeChat('group:'+groupId)?.chatName||'微信';
     if (this.chatNameCache.has(groupId)) return this.chatNameCache.get(groupId);
     try {
       const info = await this.onebot.getGroupInfo(groupId);
@@ -1421,6 +1431,7 @@ export class Orchestrator {
     let muted = false;
     try {
       const groupId = String(chatKey).split(':')[1];
+      if(isDesktopWechatKey(chatKey))return;
       const selfId = this.onebot.selfId;
       if (groupId && selfId) {
         const info = await this.onebot.call('get_group_member_info', {

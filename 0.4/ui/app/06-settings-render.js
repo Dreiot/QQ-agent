@@ -47,6 +47,7 @@ function renderSettingsSidebar() {
     ['chat', '聊天设置'],
     ['desktop', '桌面端'],
     ['onebot', 'OneBot'],
+    ['desktop-wechat','微信'],
     ['tools', '工具与技能']
   ];
   sidebar.innerHTML = `
@@ -162,6 +163,7 @@ function renderSettingsSection(c) {
     chat: () => renderChatSection(c),
     desktop: () => renderDesktopSection(c),
     onebot: () => renderOnebotSection(c),
+    'desktop-wechat': () => renderDesktopWechatSection(c),
     tools: () => renderToolsSection(c)
   };
   const render = sections[sec] || sections.api;
@@ -975,6 +977,7 @@ return `
 function renderDesktopSection(c) {
   return `
     <h3>桌面端</h3>
+    <div class="field"><button class="btn" id="restart-kernel-btn">重启内核</button><span id="restart-kernel-hint" class="hint" style="margin-left:10px">保留窗口、登录、设置和任务回执；会短暂断开核心连接。</span></div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-autostart" ${c.server?.autoStart ? 'checked' : ''} />
       <label for="cfg-autostart">开机自启</label></div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-closetray" ${c.server?.closeToTray !== false ? 'checked' : ''} />

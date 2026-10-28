@@ -61,9 +61,9 @@ export class ChatStore {
   listChats() {
     // 从磁盘文件名还原（group_123.json -> group:123），已加载的直接带上
     try {
-      const files = fs.readdirSync(MESSAGES_DIR).filter((f) => /^(group|private)_\d+\.json$/.test(f));
+      const files = fs.readdirSync(MESSAGES_DIR).filter((f) => /^(group|private)_(?:\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\.json$/.test(f));
       for (const f of files) {
-        const m = /^(group|private)_(\d+)\.json$/.exec(f);
+        const m = /^(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\.json$/.exec(f);
         if (m) this.#state(`${m[1]}:${m[2]}`);
       }
     } catch { /* 目录不存在 */ }
@@ -80,7 +80,7 @@ export class ChatStore {
   }
 
   /** 追加一条收到的消息（未读）。返回写入的条目。 */
-  appendIncoming(chatKey, { mid, ts, senderId, senderName, text, reply = null, media = [], isPoke = false, atMe = null, atNames = [] }) {
+  appendIncoming(chatKey, { mid, ts, senderId, senderName, text, reply = null, media = [], isPoke = false, atMe = null, atNames = [], principal = null }) {
     const st = this.#state(chatKey);
     const entry = {
       id: st.nextLocalId++,
@@ -89,6 +89,7 @@ export class ChatStore {
       senderId: String(senderId ?? ''),
       senderName: String(senderName ?? ''),
       text: String(text ?? ''),
+      ...(principal?.verified === true && principal.source === 'database' ? {principal:{...principal}} : {}),
       self: false,
       read: false,
       reply: reply || null,

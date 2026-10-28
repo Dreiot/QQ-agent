@@ -1,0 +1,6 @@
+# Versions observed in the local reference runtime; install in your own Windows venv.
+sqlcipher3==0.6.2
+Pillow==12.3.0
+pycryptodome==3.23.0
+zstandard==0.25.0
+imageio-ffmpeg==0.6.0

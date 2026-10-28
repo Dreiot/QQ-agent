@@ -4,6 +4,8 @@
 // - Markdown → 纯文本、QQ 硬长度切分、CQ 转义
 // - 发出的每一条记进 ChatStore（self=true，供下一次运行当"自己的发言"）
 import fs from 'node:fs';
+import {isDesktopWechatKey} from './desktop-wechat-key.js';
+import {stageWechatImage} from './wechat-images.js';
 import { getConfig, DEFAULT_CONFIG } from './config.js';
 import { sleep, randInt, createSendChain, formatClockTime } from './util.js';
 import { mdToPlain, splitForQQ } from './md-to-plain.js';
@@ -53,12 +55,47 @@ export class SendQueue {
     this.recentSent = new Map();  // "chatKey::text" -> ts（发送去重窗口）
   }
 
+  // WeChat batches submit sequentially; an unknown receipt stops this batch.
+  async #wechatTextBatch(chatKey,messages,options={}) {
+    if(!this.desktopWechat)throw Error('微信通道未连接');
+    const list=(Array.isArray(messages)?messages:[messages]).map(mdToPlain).filter(Boolean);
+    if(!list.length)throw Error('消息列表为空');
+    const sent=[];
+    for(let i=0;i<list.length;i++) {
+      try { const value=await this.#chain(chatKey)(async()=>{
+        this.#checkRate(chatKey);
+        const text=list[i];
+        if(this.#isDuplicate(chatKey,text))return {text,messageId:null,deduped:true,at:formatClockTime(Date.now())};
+        if(i)await sleep(this.#gap(text,false));
+        const r=await this.desktopWechat.sendText(chatKey,text,i===0?options:{});
+        const delivered=r.sentText||text;this.#markSent(chatKey,text);
+        this.store.appendSelf(chatKey,{text:delivered,ts:Date.now(),mid:r.message_id});
+        this.onSent?.({chatKey,text:delivered,messageId:r.message_id});
+        return {text:delivered,messageId:r.message_id,at:formatClockTime(Date.now())};
+      });sent.push(value); }
+      catch(error){error.sent=sent;throw error;}
+    }
+    return {sent,failed:[]};
+  }
+  async #wechatImage(chatKey,image,options={}) {
+    if(!this.desktopWechat)throw Error('微信通道未连接');
+    if(options.replyToMessageId!=null||options.atUserId!=null)throw Error('微信图片暂不支持原生引用或艾特');
+    const staged=await stageWechatImage(image);
+    return this.#chain(chatKey)(async()=>{
+      this.#checkRate(chatKey);
+      const r=await this.desktopWechat.sendImage(chatKey,staged);
+      this.store.appendSelf(chatKey,{text:'[微信图片]',ts:Date.now(),mid:r.message_id});
+      this.onSent?.({chatKey,text:'[微信图片]',messageId:r.message_id});return r;
+    });
+  }
+
   #chain(chatKey) {
     if (!this.chains.has(chatKey)) this.chains.set(chatKey, createSendChain());
     return this.chains.get(chatKey);
   }
 
   #checkRate(chatKey) {
+    if(this.stopping)throw Error('内核正在停止，本条未提交');
     const now = Date.now();
     const cfg = getConfig().send;
     const minute = (this.minuteTimes.get(chatKey) || []).filter((t) => now - t < 60000);
@@ -134,6 +171,7 @@ export class SendQueue {
    * 返回 { sent: [{text, messageId}], failed: [{text, error}] }；全部失败时抛错。
    */
   async sendTextBatch(chatKey, messages, options = {}) {
+    if(isDesktopWechatKey(chatKey))return this.#wechatTextBatch(chatKey,messages,options);
     const [kind, id] = String(chatKey).split(':');
     if (kind !== 'group' && kind !== 'private') throw new Error(`非法会话 key：${chatKey}`);
     const list = Array.isArray(messages) ? messages : [messages];
@@ -198,6 +236,7 @@ export class SendQueue {
 
   /** 发送一个收藏表情（独立气泡）。 */
   sendSticker(chatKey, sticker, options = {}) {
+    if(isDesktopWechatKey(chatKey))return Promise.reject(new Error('此QQ专属发送能力未接入微信'));
     const [kind, id] = String(chatKey).split(':');
     const chain = this.#chain(chatKey);
     return chain(async () => {
@@ -278,6 +317,7 @@ export class SendQueue {
    * @param {object} options { note, replyToMessageId, atUserId }
    */
   sendImage(chatKey, img, options = {}) {
+    if(isDesktopWechatKey(chatKey))return this.#wechatImage(chatKey,arguments[1],arguments[2]);
     const [kind, id] = String(chatKey).split(':');
     const chain = this.#chain(chatKey);
     const url = String(img?.url ?? '').trim();
@@ -346,6 +386,7 @@ export class SendQueue {
    * @param {object} options { label, dedupeKey, replyToMessageId, atUserId }
    */
   sendMedia(chatKey, segments, options = {}) {
+    if(isDesktopWechatKey(chatKey))return Promise.reject(new Error('此QQ专属发送能力未接入微信'));
     const [kind, id] = String(chatKey).split(':');
     if (kind !== 'group' && kind !== 'private') return Promise.reject(new Error(`非法会话 key：${chatKey}`));
     const segs = (Array.isArray(segments) ? segments : []).filter((s) => s && s.type);
@@ -372,6 +413,7 @@ export class SendQueue {
   }
 
   /** 拍一拍。发送成功后留档（self 记录），否则下一次运行不知道自己拍过。 */  poke(chatKey, targetUserId) {
+    if(isDesktopWechatKey(chatKey))return Promise.reject(new Error('此QQ专属发送能力未接入微信'));
     const [kind, id] = String(chatKey).split(':');
     const chain = this.#chain(chatKey);
     return chain(async () => {

@@ -25,6 +25,8 @@ export const DATA_DIR = process.env.QQ_AGENT_DATA_DIR || path.join(ROOT, `data${
 export const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 
 export const DEFAULT_CONFIG = {
+  // Optional Windows native channel; never starts a reader/loader until enabled.
+  desktopWechat: {enabled:false,groups:[],privateChats:[],allowAllPrivateWhenEmpty:false,imageSendEnabled:false,allowStickerCdn:false,allowStickerCdnAlias:false},
   // OpenAI 兼容 API（必填才能跑）
   api: {
     // 出厂留空：这是作者本机的网关地址，对其他人毫无意义，

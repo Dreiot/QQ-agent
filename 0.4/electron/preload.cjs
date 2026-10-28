@@ -11,6 +11,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('qqAgentShell', {
+  kernelStatus:()=>ipcRenderer.invoke('qqa-kernel-status'),
+  restartKernel:()=>ipcRenderer.invoke('qqa-kernel-restart'),
   refocus: () => {
     try { ipcRenderer.send('app-refocus'); } catch { /* ignore */ }
   },

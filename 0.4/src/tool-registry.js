@@ -23,6 +23,7 @@
 // 加了 Skill 开关后如果再散落一处，就会变成六层条件、两个地方各判一半，
 // 必然出现"UI 说能用、运行时空工具列表"的割裂。现在只有这一处口径。
 
+import {wechatToolAllowed} from './wechat-tool-policy.js';
 import { SKILL_ERROR, skillErrorText } from './skills/errors.js';
 // 默认用全局 SkillManager 单例：见下面 getToolAvailability 里的说明。
 // 无循环依赖 —— manager.js 只 import registry/capabilities/config/errors，不碰本文件。
@@ -144,6 +145,9 @@ export function getToolAvailability(toolId, context = {}) {
   } = context;
 
   const deny = (code, reason) => ({ id: def.id, enabled: false, code, reason, skillId: def.skillId ?? null });
+
+  if(Array.isArray(def.platforms) && !def.platforms.includes(runtimeContext.platform||'qq'))return deny('channel-unsupported','此工具不支持当前通道');
+  if(runtimeContext.platform==='wechat-desktop'&&!wechatToolAllowed(def))return deny('channel-unsupported','此工具未声明微信兼容');
 
   // 1) 全局开关
   if (toolsCfg.enabled === false) {

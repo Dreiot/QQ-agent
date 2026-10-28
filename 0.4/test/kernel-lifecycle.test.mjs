@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';import {EventEmitter} from 'node:events';
+import {KernelSupervisor} from '../electron/kernel-supervisor.js';import {drainKernel} from '../src/kernel-shutdown.js';import {kernelRoutes} from '../src/kernel-routes.js';
+let passed=0;const test=async(name,fn)=>{await fn();passed++;console.log('PASS '+name);};
+function fixture(fail=false){let count=0,live=0,maximum=0;const children=[];const host=new KernelSupervisor({timeoutMs:50,launch:runtime=>{const c=new EventEmitter();c.pid=++count;children.push(c);live++;maximum=Math.max(maximum,live);
+ c.postMessage=m=>setTimeout(()=>{c.emit('message',{id:m.id,ok:!fail,error:fail?'fixture failure':undefined,runtime:{paused:true,pauseReason:'manual'}});if(m.op==='stop'&&!fail){live--;c.emit('exit',0);}},1);
+ setTimeout(()=>c.emit('message',{type:'ready',port:3210,runtime,preferences:{server:{}}}),1);return c;}});return{host,count:()=>count,maximum:()=>maximum,children};}
+await test('one replacement process, even for concurrent clicks',async()=>{const f=fixture();await f.host.start();await Promise.all([f.host.restart(),f.host.restart()]);assert.equal(f.count(),2);assert.equal(f.maximum(),1);assert.equal(f.host.runtime.paused,true);await f.host.stop();});
+await test('failed stop cannot launch a duplicate core',async()=>{const f=fixture(true);await f.host.start();await assert.rejects(f.host.restart());assert.equal(f.count(),1);f.children[0].emit('exit',1);});
+await test('drain aborts active requests and waits for queued sends',async()=>{const calls=[],orchestrator={activeRuns:new Map([['chat','session']]),abortSession:()=>{calls.push('abort');orchestrator.activeRuns.clear();},abortAll:async()=>calls.push('admission')};await drainKernel({orchestrator,sender:{chains:new Map([['chat',async fn=>{calls.push('drain');await fn();}]])}});assert.deepEqual(calls,['abort','admission','drain']);});
+await test('headless restart is explicitly unsupported, with no arbitrary command API',async()=>{const routes=kernelRoutes({readBody:async()=>({})});let status;await routes[1].handler({req:{},res:{},json:(_r,s)=>status=s});assert.equal(status,409);await assert.rejects(fixture().host.command('shell'),/任意/);});
+console.log(JSON.stringify({passed,realQQMessages:0,productionDataTouched:false}));

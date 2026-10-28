@@ -7,6 +7,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR, getConfig, updateConfig } from './config.js';
+import {isDesktopWechatKey} from './desktop-wechat-key.js';
+
+const validMemberId=(chatKey,id)=>/^\d{1,15}$/.test(id)
+  || (isDesktopWechatKey(chatKey)&&/^wxdesktop_[a-f0-9]{32}$/.test(id));
 
 const MEMORY_DIR = path.join(DATA_DIR, 'memory');
 
@@ -85,10 +89,10 @@ export class MemoryStore {
     try {
       for (const f of fs.readdirSync(MEMORY_DIR)) {
         if (fs.statSync(path.join(MEMORY_DIR, f)).isDirectory()) {
-          const m = /^(group|private)_(\d+)$/.exec(f);
+          const m = /^(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})$/.exec(f);
           if (m) out.add(`${m[1]}:${m[2]}`);
         } else {
-          const m = /^(group|private)_(\d+)\.json$/.exec(f);
+          const m = /^(group|private)_(\d+|wxdesktop_[a-f0-9]{32}_[a-f0-9]{32})\.json$/.exec(f);
           if (m) out.add(`${m[1]}:${m[2]}`);
         }
       }
@@ -280,7 +284,7 @@ export class MemoryStore {
   /** 编辑群友印象（管理端）：QQ 号由调用方提供，自动回填名字，保存备注到配置。 */
   editMemberImpression(chatKey, { userId, name = '', note = '', impressions = [] }) {
     const uid = String(userId ?? '').trim();
-    if (!/^\d{1,15}$/.test(uid)) throw new Error('userId 必须是数字 QQ 号');
+    if (!validMemberId(chatKey,uid)) throw new Error('userId 不是当前通道的成员标识');
     const map = this.#ensureChat(chatKey);
     const old = map.get(uid) || loadMember(chatKey, uid, name);
     const finalName = String(name ?? '').trim().slice(0, 60) || String(old.name || '').trim() || uid;
@@ -320,7 +324,7 @@ export class MemoryStore {
   /** 手动替换某成员的全部印象（管理端编辑用）。返回更新后的成员。 */
   replaceMember(chatKey, userId, name, contents) {
     const uid = String(userId ?? '').trim();
-    if (!/^\d{1,15}$/.test(uid)) throw new Error('userId 必须是数字 QQ 号');
+    if (!validMemberId(chatKey,uid)) throw new Error('userId 不是当前通道的成员标识');
     const map = this.#ensureChat(chatKey);
     const old = map.get(uid) || loadMember(chatKey, uid, name);
     const finalName = String(name ?? '').trim().slice(0, 60) || String(old.name || '').trim() || uid;
@@ -362,7 +366,7 @@ export class MemoryStore {
   /** 删除某成员的印象文件。 */
   removeMember(chatKey, userId) {
     const uid = String(userId ?? '').trim();
-    if (!/^\d{1,15}$/.test(uid)) return false;
+    if (!validMemberId(chatKey,uid)) return false;
     const map = this.#ensureChat(chatKey);
     const m = map.get(uid) || loadMember(chatKey, uid);
     map.delete(uid);

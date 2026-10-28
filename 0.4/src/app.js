@@ -23,6 +23,9 @@ import { loadPlugins, watchPlugins } from './plugin-loader.js';
 import { skillManager } from './skills/manager.js';
 import { extractCandidateUrls, dispatchMediaLinks } from './media-links.js';
 import { createRoutes } from './routes.js';
+import {drainKernel} from './kernel-shutdown.js';
+import {DesktopWechatChannel} from './desktop-wechat.js';
+import {registerWechatTools} from './wechat-tools.js';
 import * as instanceLockModule from './instance-lock.js';
 import { logger } from './logger.js';
 import { startCommunitySync, isGloballyBlocked, FIXED_PRICE_FEED_URL } from './community.js';
@@ -79,7 +82,7 @@ function compareSemver(a, b) {
    防止监听器链式递归（见 createApp 内的递归护栏注释）。 */
 const appLogFns = new WeakSet();
 
-export function createApp({ log = console.log } = {}) {
+export function createApp({ log = console.log,kernelControl=null } = {}) {
   const cfg = getConfig();
 
   // 详尽日志：把 createApp 的 log 接到分级日志系统（落盘 + 内存缓冲 + SSE）。
@@ -128,6 +131,7 @@ export function createApp({ log = console.log } = {}) {
      时锁文件残留，下次启动要靠"PID 已死"探测才能清掉，多一层失败面。 */
   instanceLockModule.registerLockCleanup();
   const sseClients = new Set();
+  let stopping=false;
   let pluginWatcher = null; // 扩展热重载资源随应用停止而释放。
 
   const emit = (type, payload) => {
@@ -198,6 +202,9 @@ export function createApp({ log = console.log } = {}) {
   const reminders = new ReminderStore();
   const videoReader = new VideoReader(onebot);
   const orchestrator = new Orchestrator({ store, memory, stickers, sender, sessions, onebot, emit, reminders, videoReader });
+  const desktopWechat = new DesktopWechatChannel({store,orchestrator,emit,log});
+  sender.desktopWechat = desktopWechat;
+  registerWechatTools();
 
   // 远程价格表固定为官网公开地址；不从用户配置读取，避免被页面/配置篡改。
   initPriceFeed(FIXED_PRICE_FEED_URL);
@@ -718,10 +725,11 @@ export function createApp({ log = console.log } = {}) {
     readBody, authorize,
     visionScan,
     buildUsageStats, buildUsageBreakdown,
-    reloadSkills
+    reloadSkills,kernelControl,desktopWechat,sender
   });
 
   async function handleHttp(req, res) {
+    if(stopping){res.writeHead(503,{'Content-Type':'application/json; charset=utf-8',Connection:'close'});res.end(JSON.stringify({error:'内核重启中，请稍后重连'}));return;}
     const url = new URL(req.url, 'http://127.0.0.1');
     const pathname = url.pathname;
 
@@ -947,6 +955,7 @@ export function createApp({ log = console.log } = {}) {
 
     await skillsReady;
     await onebot.connect();
+    desktopWechat.start();
 
     if (getConfig().proactive?.enabled) orchestrator.startProactiveLoop();
     orchestrator.startReminderLoop();   // 提醒（闹钟）调度：到点往群里发提醒
@@ -987,10 +996,13 @@ export function createApp({ log = console.log } = {}) {
   }
 
   async function stop() {
+    stopping=true;
     // 先停掉热重载 watcher：否则 stop() 之后文件变动仍会触发重载 + 广播
     try { pluginWatcher?.close?.(); } catch { /* ignore */ }
     pluginWatcher = null;
-    await orchestrator.abortAll();
+    await drainKernel({orchestrator,sender});
+    desktopWechat.dispose();
+    for(const skill of skillManager.list())try{skillManager.deactivate(skill.id,{reason:'core-stop'});}catch{}
     orchestrator.stopReminderLoop();
     if (communitySyncTimer) clearInterval(communitySyncTimer);
     // 索引缓存立刻落盘：正常运行中靠防抖（5s），退出前必须写一次，
@@ -1002,14 +1014,14 @@ export function createApp({ log = console.log } = {}) {
     }
     sseClients.clear();
     onebot.close();
-    server.close();
+    if(server.listening)await new Promise((resolve,reject)=>{server.close(error=>error?reject(error):resolve());server.closeIdleConnections?.();server.closeAllConnections?.();});
     logger.flush();
     // 解绑本次 createApp 的日志转发器，避免 Electron/测试重复创建 app 时监听器累积。
     try { removeAppLogListener?.(); } catch { /* ignore */ }
     releaseInstanceLock();
   }
 
-  return { server, onebot, store, memory, stickers, sender, sessions, orchestrator, start, stop, emit, getConfig, updateConfig, reloadSkills };
+  return { server, onebot, store, memory, stickers, sender, sessions, orchestrator, desktopWechat, start, stop, emit, getConfig, updateConfig, reloadSkills };
 }
 
 /**
